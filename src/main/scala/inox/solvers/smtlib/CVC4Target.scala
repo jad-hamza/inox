@@ -4,10 +4,8 @@ package inox
 package solvers
 package smtlib
 
-import org.apache.commons.lang3.StringEscapeUtils
-
-import _root_.smtlib.parser.Terms.{Identifier => SMTIdentifier, _}
-import _root_.smtlib.parser.Commands._
+import _root_.smtlib.trees.Terms.{Identifier => SMTIdentifier, _}
+import _root_.smtlib.trees.Commands._
 import _root_.smtlib.interpreters.CVC4Interpreter
 import _root_.smtlib.theories._
 import _root_.smtlib.theories.experimental._
@@ -27,7 +25,6 @@ trait CVC4Target extends SMTLIBTarget with SMTLIBDebugger {
 
   override protected def computeSort(t: Type): Sort = t match {
     case SetType(base) => Sets.SetSort(declareSort(base))
-    case StringType  => Strings.StringSort()
     case _ => super.computeSort(t)
   }
 
@@ -80,9 +77,9 @@ trait CVC4Target extends SMTLIBTarget with SMTLIBDebugger {
       case (Sets.Union(e1, e2), _) =>
         (fromSMT(e1), fromSMT(e2)) match {
           case (fs1 @ FiniteSet(elems1, b1), fs2 @ FiniteSet(elems2, b2)) =>
-            FiniteSet(elems1 ++ elems2, leastUpperBound(b1, b2).getOrElse {
-              unsupported(SetUnion(fs1, fs2), "woot? incompatible set base-types")
-            })
+            val tpe = leastUpperBound(b1, b2)
+            if (tpe == Untyped) unsupported(SetUnion(fs1, fs2), "woot? incompatible set base-types")
+            FiniteSet(elems1 ++ elems2, tpe)
           case (s1, s2) => SetUnion(s1, s2)
         }
 
@@ -100,27 +97,6 @@ trait CVC4Target extends SMTLIBTarget with SMTLIBDebugger {
 
       case (FunctionApplication(SimpleSymbol(SSymbol("__array_store_all__")), Seq(_, elem)), Some(MapType(k, v))) =>
         FiniteMap(Seq(), fromSMT(elem, v), k, v)
-
-      case (SString(v), Some(StringType)) =>
-        StringLiteral(StringEscapeUtils.unescapeJava(v))
-
-      case (Strings.Length(a), _) => StringLength(fromSMT(a, StringType))
-
-      case (Strings.Concat(a, b, cs @ _*), _) =>
-        (StringConcat(fromSMT(a, StringType), fromSMT(b, StringType)) /: cs) {
-          case (s, c) => StringConcat(s, fromSMT(c, StringType))
-        }
-
-      case (Strings.Substring(s, start, offset), _) =>
-        val ss = fromSMT(s, StringType)
-        val tt = fromSMT(start, IntegerType)
-        val oo = fromSMT(offset, IntegerType)
-        oo match {
-          case Minus(otherEnd, `tt`) => SubString(ss, tt, otherEnd)
-          case _ => SubString(ss, tt, Plus(tt, oo))
-        }
-
-      case (Strings.At(a, b), _) => fromSMT(Strings.Substring(a, b, SNumeral(1)))
 
       case _ => super.fromSMT(t, otpe)
     }
@@ -152,16 +128,6 @@ trait CVC4Target extends SMTLIBTarget with SMTLIBDebugger {
     case SetAdd(a, b)           => Sets.Insert(toSMT(b), toSMT(a))
     case SetIntersection(a, b)  => Sets.Intersection(toSMT(a), toSMT(b))
 
-    /** String operations */
-    case StringLiteral(v) =>
-      declareSort(StringType)
-      Strings.StringLit(StringEscapeUtils.escapeJava(v))
-    case StringLength(a) => Strings.Length(toSMT(a))
-    case StringConcat(a, b) => Strings.Concat(toSMT(a), toSMT(b))
-    case SubString(a, start, Plus(start2, length)) if start == start2  =>
-      Strings.Substring(toSMT(a),toSMT(start),toSMT(length))
-    case SubString(a, start, end) =>
-      Strings.Substring(toSMT(a),toSMT(start),toSMT(Minus(end, start)))
     case _ =>
       super.toSMT(e)
   }

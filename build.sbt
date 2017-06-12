@@ -1,6 +1,8 @@
 name := "inox"
 
-version := "1.0.1"
+enablePlugins(GitVersioning)
+
+git.useGitDescribe := true
 
 organization := "ch.epfl.lara"
 
@@ -14,7 +16,13 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-val osName = if (Option(System.getProperty("os.name")).getOrElse("").toLowerCase contains "win") "win" else "unix"
+val osInf = Option(System.getProperty("os.name")).getOrElse("")
+
+val isUnix    = osInf.indexOf("nix") >= 0 || osInf.indexOf("nux") >= 0
+val isWindows = osInf.indexOf("Win") >= 0
+val isMac     = osInf.indexOf("Mac") >= 0
+
+val osName = if (isWindows) "win" else if (isMac) "mac" else "unix"
 
 val osArch = System.getProperty("sun.arch.data.model")
 
@@ -31,7 +39,7 @@ resolvers ++= Seq(
 libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "3.0.1" % "test;it",
   "org.apache.commons" % "commons-lang3" % "3.4",
-  "com.regblanc" %% "scala-smtlib" % "0.2.1",
+  "com.regblanc" %% "scala-smtlib" % "0.2.2",
   "uuverifiers" %% "princess" % "2016-12-26"
 )
 
@@ -121,10 +129,11 @@ lazy val root = (project in file("."))
 
 publishMavenStyle := true
 
-publishTo := {
+publishTo <<= version { (v: String) =>
   val nexus = "https://oss.sonatype.org/"
-  if (isSnapshot.value) Some("snapshots" at nexus + "content/repositories/snapshots")
-  else                  Some("releases"  at nexus + "service/local/staging/deploy/maven2")
+  // @nv: we can't use `isSnapshot` here as it is not compatible with sbt-git versioning
+  if (v.trim.endsWith("SNAPSHOT")) Some("snapshots" at nexus + "content/repositories/snapshots")
+  else                             Some("releases"  at nexus + "service/local/staging/deploy/maven2")
 }
 
 publishArtifact in (Test, packageBin) := true

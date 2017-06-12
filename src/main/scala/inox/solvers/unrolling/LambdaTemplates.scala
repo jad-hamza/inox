@@ -147,12 +147,18 @@ trait LambdaTemplates { self: Templates =>
       registerAppBlocker(gen, app, Right(f), cond, args)
     }
 
-    if (ft.from.nonEmpty) Seq.empty else {
-      for (template <- byType(ft).values.toSeq if canEqual(template.ids._2, f)) yield {
-        val (tmplApp, fApp) = (mkApp(template.ids._2, ft, Seq.empty), mkApp(f, ft, Seq.empty))
-        mkImplies(mkAnd(b, template.start, mkEquals(tmplApp, fApp)), mkEquals(template.ids._2, f))
-      }
+    if (ft.from.nonEmpty) Seq.empty else for {
+      template <- byType(ft).values.toList
+      if canEqual(template.ids._2, f) && isPureTemplate(template)
+    } yield {
+      val (tmplApp, fApp) = (mkApp(template.ids._2, ft, Seq.empty), mkApp(f, ft, Seq.empty))
+      mkImplies(mkAnd(b, template.start, mkEquals(tmplApp, fApp)), mkEquals(template.ids._2, f))
     }
+  }
+
+  private def isPureTemplate(template: LambdaTemplate): Boolean = template.structure.body match {
+    case Lambda(_, _: Variable) => true
+    case _ => false
   }
 
   private def registerAppBlocker(gen: Int, key: (Encoded, App), template: Either[LambdaTemplate, Encoded], equals: Encoded, args: Seq[Arg]): Unit = {
@@ -199,13 +205,17 @@ trait LambdaTemplates { self: Templates =>
         case (v, dep) => registerClosure(newTemplate.start, idT -> newTemplate.tpe, dep -> v.tpe)
       }
 
-      val extClauses = for ((oldB, freeF) <- freeBlockers(newTemplate.tpe) if canEqual(freeF, idT)) yield {
+      val extClauses = for ((oldB, freeF) <- freeBlockers(newTemplate.tpe).toList if canEqual(freeF, idT)) yield {
         val nextB  = encodeSymbol(Variable.fresh("b_or", BooleanType, true))
         val ext = mkOr(mkAnd(newTemplate.start, mkEquals(idT, freeF)), nextB)
+        freeBlockers += newTemplate.tpe -> (freeBlockers(newTemplate.tpe) - (oldB -> freeF) + (nextB -> freeF))
         mkEquals(oldB, ext)
       }
 
-      val arglessEqClauses = if (newTemplate.tpe.from.nonEmpty) Seq.empty[Encoded] else {
+      // make sure we introduce sound equality constraints between closures that take no arguments
+      val arglessEqClauses = if (newTemplate.tpe.from.nonEmpty || !isPureTemplate(newTemplate)) {
+        Seq.empty[Encoded]
+      } else {
         for ((b,f) <- freeFunctions(newTemplate.tpe) if canEqual(idT, f)) yield {
           val (tmplApp, fApp) = (mkApp(idT, newTemplate.tpe, Seq.empty), mkApp(f, newTemplate.tpe, Seq.empty))
           mkImplies(mkAnd(b, newTemplate.start, mkEquals(tmplApp, fApp)), mkEquals(idT, f))
@@ -258,7 +268,7 @@ trait LambdaTemplates { self: Templates =>
         Seq.empty
       } else {
         lazy val gen = nextGeneration(currentGeneration)
-        for (template <- byType(tpe).values if canEqual(caller, template.ids._2)) {
+        for (template <- byType(tpe).values.toList if canEqual(caller, template.ids._2)) {
           val cond = mkAnd(template.start, mkEquals(template.ids._2, caller))
           registerAppBlocker(gen, key, Left(template), cond, args)
         }

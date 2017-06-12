@@ -3,6 +3,9 @@
 package inox
 package ast
 
+import inox.parsing.Interpolator
+import inox.utils.Position
+
 import scala.collection.mutable.{Map => MutableMap}
 
 /** Provides types that describe Inox definitions. */
@@ -79,6 +82,11 @@ trait Definitions { self: Trees =>
     lazy val tpe = v.tpe
     lazy val flags = v.flags
 
+    override def setPos(pos: Position): ValDef.this.type = {
+      v.setPos(pos)
+      super.setPos(pos)
+    }
+
     /** Transform this [[ValDef]] into a [[Expressions.Variable Variable]] */
     def toVariable: Variable = v
     def freshen: ValDef = new ValDef(v.freshen).copiedFrom(this)
@@ -89,7 +97,7 @@ trait Definitions { self: Trees =>
     override def toString: String = s"ValDef($id, $tpe, $flags)"
 
     def copy(id: Identifier = id, tpe: Type = tpe, flags: Set[Flag] = flags): ValDef =
-      new ValDef(v.copy(id = id, tpe = tpe, flags = flags))
+      new ValDef(v.copy(id = id, tpe = tpe, flags = flags)).copiedFrom(this)
   }
 
   object ValDef {
@@ -114,6 +122,12 @@ trait Definitions { self: Trees =>
 
     protected val trees: self.type = self
     protected val symbols: this.type = this
+
+    val interpolator: Interpolator { val trees: AbstractSymbols.this.trees.type; val symbols: AbstractSymbols.this.type } = new Interpolator {
+      protected val trees: AbstractSymbols.this.trees.type = AbstractSymbols.this.trees
+      protected val symbols: AbstractSymbols.this.type = AbstractSymbols.this
+    }
+
 
     type Semantics = inox.Semantics {
       val trees: self0.trees.type
@@ -155,6 +169,38 @@ trait Definitions { self: Trees =>
 
     def transform(t: TreeTransformer { val s: self.type }): t.t.Symbols = SymbolTransformer(t).transform(this)
 
+    /** Makes sure these symbols pass a certain number of well-formedness checks, such as
+      * - function definition bodies satisfy the declared return types
+      * - adt sorts and constructors point to each other correctly
+      * - each adt type has at least one instance
+      * - adt type parameter flags match between children and parents
+      */
+    lazy val ensureWellFormed = {
+      for ((_, fd) <- functions) {
+        typeCheck(fd.fullBody, fd.returnType)
+      }
+
+      for ((_, adt) <- adts) {
+        if (!adt.isWellFormed) throw NotWellFormedException(adt)
+
+        adt match {
+          case sort: ADTSort =>
+            if (!sort.constructors.forall(cons => cons.sort == Some(sort.id)))
+              throw NotWellFormedException(adt)
+          case cons: ADTConstructor =>
+            cons.sort.map(getADT) match {
+              case None => // OK
+              case Some(sort: ADTSort) =>
+                if (!(sort.cons contains cons.id) ||
+                    cons.tparams.size != sort.tparams.size ||
+                    (cons.tparams zip sort.tparams).exists(p => p._1.flags != p._2.flags))
+                  throw NotWellFormedException(adt)
+              case _ => throw NotWellFormedException(cons)
+            }
+        }
+      }
+    }
+
     override def equals(that: Any): Boolean = that match {
       case sym: AbstractSymbols => functions == sym.functions && adts == sym.adts
       case _ => false
@@ -194,11 +240,15 @@ trait Definitions { self: Trees =>
     * implicit contract on `args` such that for each argument, either
     * {{{arg: Expr | Type}}}, or there exists no [[Expressions.Expr Expr]]
     * or [[Types.Type Type]] instance within arg. */
-  abstract class Flag(name: String, args: Seq[Any]) extends Printable {
+  abstract class Flag(val name: String, args: Seq[Any]) extends Printable {
     def asString(implicit opts: PrinterOptions): String = name + (if (args.isEmpty) "" else {
       args.map(arg => self.asString(arg)(opts)).mkString("(", ", ", ")")
     })
   }
+
+  /** Determines the variance of a [[Types.TypeParameter TypeParameter]]
+    * (should only be attached to those) */
+  case class Variance(variance: Boolean) extends Flag("variance", Seq(variance))
 
   /** Denotes that this adt is refined by invariant ''id'' */
   case class HasADTInvariant(id: Identifier) extends Flag("invariant", Seq(id))
@@ -209,7 +259,7 @@ trait Definitions { self: Trees =>
   /** Compiler annotations given in the source code as @annot.
     * 
     * @see [[Flag]] for some notes on the actual type of [[args]]. */
-  case class Annotation(val name: String, val args: Seq[Any]) extends Flag(name, args)
+  case class Annotation(override val name: String, val args: Seq[Any]) extends Flag(name, args)
 
   def extractFlag(name: String, args: Seq[Any]): Flag = (name, args) match {
     case ("invariant", id: Identifier) => HasADTInvariant(id)
@@ -218,7 +268,7 @@ trait Definitions { self: Trees =>
   }
 
   implicit class FlagSetWrapper(flags: Set[Flag]) {
-    def contains(str: String): Boolean = flags contains Annotation(str, Seq.empty)
+    def contains(str: String): Boolean = flags.exists(_.name == str)
   }
 
   /** Represents an ADT definition (either the ADT sort or a constructor). */
@@ -236,7 +286,7 @@ trait Definitions { self: Trees =>
       def rec(adt: TypedADTDefinition, seen: Set[TypedADTDefinition], first: Boolean = false): Boolean = {
         if (!first && adt == base) true else if (seen(adt)) false else (adt match {
           case tsort: TypedADTSort => tsort.constructors.exists(rec(_, seen + tsort))
-          case tcons: TypedADTConstructor => tcons.fieldsTypes.flatMap(tpe => s.typeOps.collect {
+          case tcons: TypedADTConstructor => tcons.fieldsTypes.flatMap(tpe => typeOps.collect {
             case t: ADTType => Set(t.getADT)
             case _ => Set.empty[TypedADTDefinition]
           } (tpe)).exists(rec(_, seen + tcons))
@@ -244,6 +294,30 @@ trait Definitions { self: Trees =>
       }
 
       rec(base, Set.empty, first = true)
+    }
+
+    def isWellFormed(implicit s: Symbols): Boolean = {
+      def flatten(s: Seq[Type]): Seq[Type] = s match {
+        case Nil => Nil
+        case (head: TupleType) +: tail => flatten(head.bases ++ tail)
+        case (head: MapType) +: tail => flatten(head.to +: tail) // Because Map has a default.
+        case head +: tail => head +: flatten(tail)
+      }
+
+      def rec(adt: TypedADTDefinition, seen: Set[TypedADTDefinition]): Boolean = {
+        if (seen(adt)) false else (adt match {
+          case tsort: TypedADTSort =>
+            tsort.constructors.exists(rec(_, seen + tsort))
+
+          case tcons: TypedADTConstructor =>
+            flatten(tcons.fieldsTypes).flatMap{
+              case t: ADTType => Set(t.getADT)
+              case _ => Set.empty[TypedADTDefinition]
+            }.forall(rec(_, seen + tcons))
+        })
+      }
+
+      rec(typed, Set.empty)
     }
 
     /** An invariant that refines this [[ADTDefinition]] */
@@ -453,7 +527,7 @@ trait Definitions { self: Trees =>
 
 
   /** Represents a [[FunDef]] whose type parameters have been instantiated with the specified types */
-  case class TypedFunDef(fd: FunDef, tps: Seq[Type])(implicit symbols: Symbols) extends Tree {
+  case class TypedFunDef(fd: FunDef, tps: Seq[Type])(implicit val symbols: Symbols) extends Tree {
     copiedFrom(fd)
 
     val id = fd.id

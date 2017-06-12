@@ -35,14 +35,13 @@ trait TreeOps { self: Trees =>
       vd.flags.foreach(traverse)
     }
 
-    def traverse(v: Variable): Unit = {
-      traverse(v.tpe)
-      v.flags.foreach(traverse)
+    def traverse(tpd: TypeParameterDef): Unit = {
+      traverse(tpd.tp)
     }
 
     def traverse(e: Expr): Unit = {
       val (vs, es, tps, _) = deconstructor.deconstruct(e)
-      vs.foreach(traverse)
+      vs.foreach(v => traverse(v.toVal))
       es.foreach(traverse)
       tps.foreach(traverse)
     }
@@ -57,6 +56,25 @@ trait TreeOps { self: Trees =>
       val (es, tps, _) = deconstructor.deconstruct(flag)
       es.foreach(traverse)
       tps.foreach(traverse)
+    }
+
+    final def traverse(fd: FunDef): Unit = {
+      fd.tparams.foreach(traverse)
+      fd.params.foreach(traverse)
+      traverse(fd.returnType)
+      traverse(fd.fullBody)
+      fd.flags.foreach(traverse)
+    }
+
+    final def traverse(adt: ADTDefinition): Unit = adt match {
+      case sort: ADTSort =>
+        sort.tparams.foreach(traverse)
+        sort.flags.foreach(traverse)
+
+      case cons: ADTConstructor =>
+        cons.tparams.foreach(traverse)
+        cons.fields.foreach(traverse)
+        cons.flags.foreach(traverse)
     }
   }
 }
@@ -184,12 +202,10 @@ trait TreeTransformer {
       transform(fd.returnType),
       transform(fd.fullBody),
       fd.flags map transform
-    )
+    ).copiedFrom(fd)
   }
 
   final def transform(adt: s.ADTDefinition): t.ADTDefinition = adt match {
-    case sort: s.ADTSort if (s eq t) => sort.asInstanceOf[t.ADTSort]
-
     case sort: s.ADTSort => new t.ADTSort(
       sort.id,
       sort.tparams map transform,
@@ -244,6 +260,24 @@ trait TreeTransformer {
   }
 }
 
+/** Enables equality checks between symbol transformer compositions */
+private[ast] trait SymbolTransformerComposition extends SymbolTransformer {
+  protected val lhs: SymbolTransformer
+  protected val rhs: SymbolTransformer { val t: lhs.s.type }
+
+  val s: rhs.s.type = rhs.s
+  val t: lhs.t.type = lhs.t
+
+  override def transform(syms: s.Symbols): t.Symbols = lhs.transform(rhs.transform(syms))
+
+  override def equals(that: Any): Boolean = that match {
+    case c: SymbolTransformerComposition => rhs == c.rhs && lhs == c.lhs
+    case _ => false
+  }
+
+  override def hashCode: Int = 31 * rhs.hashCode + lhs.hashCode
+}
+
 /** Symbol table transformer base type */
 trait SymbolTransformer { self =>
   val s: Trees
@@ -251,16 +285,13 @@ trait SymbolTransformer { self =>
 
   def transform(syms: s.Symbols): t.Symbols
 
-  def compose(that: SymbolTransformer {
-    val t: self.s.type
-  }): SymbolTransformer {
+  def compose(that: SymbolTransformer { val t: self.s.type }): SymbolTransformer {
     val s: that.s.type
     val t: self.t.type
-  } = new SymbolTransformer {
-    val s: that.s.type = that.s
-    val t: self.t.type = self.t
-    override def transform(syms: s.Symbols): t.Symbols = self.transform(that.transform(syms))
-  }
+  } = new {
+    val rhs: that.type = that
+    val lhs: self.type = self
+  } with SymbolTransformerComposition
 
   def andThen(that: SymbolTransformer {
     val s: self.t.type

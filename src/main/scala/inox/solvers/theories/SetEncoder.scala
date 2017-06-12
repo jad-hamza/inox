@@ -109,13 +109,7 @@ trait SetEncoder extends SimpleEncoder {
     })
   }
 
-  val setADT: ADTDefinition = {
-    val tparams = Seq(TypeParameterDef(TypeParameter.fresh("T")))
-    val tp = tparams.head.tp
-    new ADTSort(SetID, tparams, Seq(SumID, ElemID, LeafID),
-      ScalaSet(HasADTEquality(EqualsID))
-    )
-  }
+  val setADT = mkSort(SetID, HasADTEquality(EqualsID))("T")(Seq(SumID, ElemID, LeafID))
 
   val sumADT = mkConstructor(SumID)("T")(Some(SetID)) {
     case Seq(aT) => Seq(ValDef(left, Set(aT)), ValDef(right, Set(aT)))
@@ -184,6 +178,21 @@ trait SetEncoder extends SimpleEncoder {
 
       case ADT(ADTType(LeafID, Seq(tpe)), Seq()) =>
         FiniteSet(Seq.empty, transform(tpe)).copiedFrom(e)
+
+      case FunctionInvocation(AddID, _, Seq(set, elem)) =>
+        SetAdd(transform(set), transform(elem)).copiedFrom(e)
+
+      case FunctionInvocation(ContainsID, _, Seq(set, elem)) =>
+        ElementOfSet(transform(elem), transform(set)).copiedFrom(e)
+
+      case FunctionInvocation(IntersectID, _, Seq(s1, s2)) =>
+        SetIntersection(transform(s1), transform(s2)).copiedFrom(e)
+
+      case FunctionInvocation(UnionID, _, Seq(s1, s2)) =>
+        SetUnion(transform(s1), transform(s2)).copiedFrom(e)
+
+      case FunctionInvocation(DifferenceID, _, Seq(s1, s2)) =>
+        SetDifference(transform(s1), transform(s2)).copiedFrom(e)
 
       case _ => super.transform(e)
     }

@@ -5,6 +5,8 @@ package tip
 
 import solvers._
 
+import scala.language.existentials
+
 class TipTestSuite extends TestSuite with ResourceUtils {
 
   override def configurations = Seq(
@@ -25,7 +27,13 @@ class TipTestSuite extends TestSuite with ResourceUtils {
     (solver == "smt-z3" && fileName.endsWith("MergeSort2.scala-1.tip")) ||
     // Z3 and CVC4 binaries are exceedingly slow on this benchmark
     (solver == "smt-z3" && fileName.endsWith("BinarySearchTreeQuant.scala-2.tip")) ||
-    (solver == "smt-cvc4" && fileName.endsWith("BinarySearchTreeQuant.scala-2.tip"))
+    (solver == "smt-cvc4" && fileName.endsWith("BinarySearchTreeQuant.scala-2.tip")) ||
+    // use non-linear operators that aren't supported in CVC4
+    (solver == "smt-cvc4" && fileName.endsWith("LetsInForall.tip")) ||
+    (solver == "smt-cvc4" && fileName.endsWith("Instantiation.scala-0.tip")) ||
+    (solver == "smt-cvc4" && fileName.endsWith("Weird.scala-0.tip")) ||
+    (solver == "smt-cvc4" && fileName.endsWith("Soundness.scala-0.tip")) ||
+    (solver == "smt-cvc4" && fileName.endsWith("Soundness2.scala-0.tip"))
   }
 
   private def ignore(ctx: Context, file: java.io.File): FilterStatus = 

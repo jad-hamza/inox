@@ -47,12 +47,26 @@ trait Types { self: Trees =>
   case object StringType  extends Type
 
   case class BVType(size: Int) extends Type
+
+  object Int8Type extends BVType(8) {
+    override def toString = "Int8Type"
+  }
+  object Int16Type extends BVType(16) {
+    override def toString = "Int16Type"
+  }
   object Int32Type extends BVType(32) {
     override def toString = "Int32Type"
+  }
+  object Int64Type extends BVType(64) {
+    override def toString = "Int64Type"
   }
 
   case class TypeParameter(id: Identifier, flags: Set[Flag]) extends Type {
     def freshen = TypeParameter(id.freshen, flags)
+
+    def isCovariant = flags contains Variance(true)
+    def isContravariant = flags contains Variance(false)
+    def isInvariant = !isCovariant && !isContravariant
 
     override def equals(that: Any) = that match {
       case tp: TypeParameter => id == tp.id
@@ -83,6 +97,12 @@ trait Types { self: Trees =>
   case class ADTType(id: Identifier, tps: Seq[Type]) extends Type {
     def lookupADT(implicit s: Symbols): Option[TypedADTDefinition] = s.lookupADT(id, tps)
     def getADT(implicit s: Symbols): TypedADTDefinition = s.getADT(id, tps)
+
+    def getField(selector: Identifier)(implicit s: Symbols): Option[ValDef] = lookupADT match {
+      case Some(tcons: TypedADTConstructor) =>
+        tcons.fields.collectFirst { case vd @ ValDef(`selector`, _, _) => vd }
+      case _ => None
+    }
   }
 
   /** NAryType extractor to extract any Type in a consistent way.
@@ -103,11 +123,22 @@ trait Types { self: Trees =>
   }
 
   object FirstOrderFunctionType {
-    def unapply(tpe: Type): Option[(Seq[Type], Type)] = tpe match {
+    def unapply(tpe: FunctionType): Option[(Seq[Type], Type)] = tpe match {
+      case FunctionType(from, to: FunctionType) =>
+        val Some((toFrom, toTo)) = unapply(to)
+        Some((from ++ toFrom, toTo))
       case FunctionType(from, to) =>
-        unapply(to).map(p => (from ++ p._1) -> p._2) orElse Some(from -> to)
-      case _ => None
+        Some(from -> to)
     }
+  }
+
+  object typeOps extends {
+    protected val sourceTrees: self.type = self
+    protected val targetTrees: self.type = self
+  } with GenTreeOps {
+    type Source = self.Type
+    type Target = self.Type
+    lazy val Deconstructor = NAryType
   }
 }
 

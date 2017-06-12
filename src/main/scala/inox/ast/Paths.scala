@@ -8,7 +8,34 @@ import inox.Bench
 trait Paths { self: SymbolOps with TypeOps =>
   import trees._
 
-  object Path {
+  trait PathLike[Self <: PathLike[Self]] { self: Self =>
+
+    /** Add a binding to this `PathLike`. */
+    def withBinding(p: (ValDef, Expr)): Self
+
+    def withBindings(ps: Iterable[(ValDef, Expr)]): Self = ps.foldLeft(self)(_ withBinding _)
+
+    /** Add a condition to this `PathLike`. */
+    def withCond(e: Expr): Self
+
+    /** Add multiple conditions to this `PathLike`. */
+    def withConds(es: Iterable[Expr]): Self = es.foldLeft(self)(_ withCond _)
+
+    /** Appends `that` path at the end of `this`. */
+    def merge(that: Self): Self
+
+    /** Appends `those` paths at the end of `this`. */
+    def merge(those: Traversable[Self]): Self = those.foldLeft(self)(_ merge _)
+
+    /** Returns the negation of this path. */
+    def negate: Self
+  }
+
+  trait PathProvider[P <: PathLike[P]] {
+    def empty: P
+  }
+
+  implicit object Path extends PathProvider[Path] {
     final type Element = Either[(ValDef, Expr), Expr]
 
     def empty: Path = new Path(Seq.empty)
@@ -34,7 +61,7 @@ trait Paths { self: SymbolOps with TypeOps =>
     * not defined, whereas an encoding of let-bindings with equalities
     * could introduce non-sensical equations.
     */
-  class Path private(private[ast] val elements: Seq[Path.Element]) extends Printable {
+  class Path protected(val elements: Seq[Path.Element]) extends Printable with PathLike[Path] {
     import Path.Element
 
     /** Add a binding to this [[Path]] */
@@ -44,17 +71,20 @@ trait Paths { self: SymbolOps with TypeOps =>
       new Path(before ++ Seq(Left(p)) ++ after)
     }
 
-    def withBindings(ps: Iterable[(ValDef, Expr)]) = {
-      ps.foldLeft(this)( _ withBinding _ )
-    }
-
     /** Add a condition to this [[Path]] */
-    def withCond(e: Expr) = {
-      if (e == BooleanLiteral(true)) this
-      else new Path(elements :+ Right(e))
-    }
+    def withCond(e: Expr): Path = e match {
+      case TopLevelAnds(es) if es.size > 1 => withConds(es)
+      case Not(TopLevelOrs(es)) if es.size > 1 => withConds(es.map(not(_)))
+      case _ =>
+        val notE = not(e)
+        val newElements = elements.map(_.right.map { e =>
+          simplifyByConstructors(exprOps.replace(Map(notE -> BooleanLiteral(false)), e))
+        }) :+ Right(simplifyByConstructors(conditions.foldLeft(e) { (e, c) =>
+          exprOps.replace(Map(not(c) -> BooleanLiteral(false)), e)
+        }))
 
-    def withConds(es: Iterable[Expr]) = new Path(elements ++ es.filterNot( _ == BooleanLiteral(true)).map(Right(_)))
+        new Path(newElements.filterNot(_.right.exists(_ == BooleanLiteral(true))))
+    }
 
     /** Remove bound variables from this [[Path]]
       * @param ids the bound variables to remove
@@ -63,9 +93,6 @@ trait Paths { self: SymbolOps with TypeOps =>
 
     /** Appends `that` path at the end of `this` */
     def merge(that: Path): Path = new Path((elements ++ that.elements).distinct)
-
-    /** Appends `those` paths at the end of `this` */
-    def merge(those: Traversable[Path]): Path = those.foldLeft(this)(_ merge _)
 
     /** Transforms all expressions inside the path
       *
@@ -154,7 +181,7 @@ trait Paths { self: SymbolOps with TypeOps =>
         case Variable(id, _, _) => ids.contains(id)
         case _ => false
       }(e)
-      
+
       val newElements = elements.filter{
         case Left((vd, e)) => ids.contains(vd.id) || containsIds(ids)(e)
         case Right(e) => containsIds(ids)(e)

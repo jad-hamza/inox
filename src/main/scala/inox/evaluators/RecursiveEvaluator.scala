@@ -312,6 +312,18 @@ trait RecursiveEvaluator
         case (le,re) => throw EvalError("Unexpected operation: (" + le.asString + ") >>> (" + re.asString + ")")
       }
 
+    case BVNarrowingCast(expr, bvt) =>
+      e(expr) match {
+        case bv @ BVLiteral(_, _) => BVLiteral(bv.toBigInt, bvt.size)
+        case x => throw EvalError(typeErrorMsg(x, BVType(bvt.size + 1))) // or any larger BVType
+      }
+
+    case BVWideningCast(expr, bvt) =>
+      e(expr) match {
+        case bv @ BVLiteral(_, _) => BVLiteral(bv.toBigInt, bvt.size)
+        case x => throw EvalError(typeErrorMsg(x, BVType(bvt.size - 1))) // or any smaller BVType
+      }
+
     case LessThan(l,r) =>
       (e(l), e(r)) match {
         case (b1 @ BVLiteral(_, s1), b2 @ BVLiteral(_, s2)) if s1 == s2 =>
@@ -474,7 +486,7 @@ trait RecursiveEvaluator
 
     case c: Choose =>
       rctx.getChoose(c.res.id) match {
-        case Some(expr) => e(expr)(rctx.withoutChoose(c.res.id), gctx)
+        case Some(expr) => e(expr)
         case None => onChooseInvocation {
           replaceFromSymbols(variablesOf(c).map(v => v -> e(v)).toMap, c).asInstanceOf[Choose]
         }

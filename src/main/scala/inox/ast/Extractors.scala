@@ -33,9 +33,9 @@ trait TreeDeconstructor {
     case s.ADTSelector(e, sel) =>
       (Seq(), Seq(e), Seq(), (_, es, _) => t.ADTSelector(es.head, sel))
     case s.IsInstanceOf(e, ct) =>
-      (Seq(), Seq(e), Seq(ct), (_, es, tps) => t.IsInstanceOf(es.head, tps.head.asInstanceOf[t.ADTType]))
+      (Seq(), Seq(e), Seq(ct), (_, es, tps) => t.IsInstanceOf(es.head, tps.head))
     case s.AsInstanceOf(e, ct) =>
-      (Seq(), Seq(e), Seq(ct), (_, es, tps) => t.AsInstanceOf(es.head, tps.head.asInstanceOf[t.ADTType]))
+      (Seq(), Seq(e), Seq(ct), (_, es, tps) => t.AsInstanceOf(es.head, tps.head))
     case s.TupleSelect(e, i) =>
       (Seq(), Seq(e), Seq(), (_, es, _) => t.TupleSelect(es.head, i))
     case s.Lambda(args, body) => (
@@ -84,6 +84,10 @@ trait TreeDeconstructor {
       (Seq(), Seq(t1, t2), Seq(), (_, es, _) => t.BVAShiftRight(es(0), es(1)))
     case s.BVLShiftRight(t1, t2) =>
       (Seq(), Seq(t1, t2), Seq(), (_, es, _) => t.BVLShiftRight(es(0), es(1)))
+    case s.BVNarrowingCast(e, bvt) =>
+      (Seq(), Seq(e), Seq(bvt), (_, es, tps) => t.BVNarrowingCast(es(0), tps(0).asInstanceOf[t.BVType]))
+    case s.BVWideningCast(e, bvt) =>
+      (Seq(), Seq(e), Seq(bvt), (_, es, tps) => t.BVWideningCast(es(0), tps(0).asInstanceOf[t.BVType]))
     case s.StringConcat(t1, t2) =>
       (Seq(), Seq(t1, t2), Seq(), (_, es, _) => t.StringConcat(es(0), es(1)))
     case s.SetAdd(t1, t2) =>
@@ -205,6 +209,8 @@ trait TreeDeconstructor {
   }
 
   def deconstruct(f: s.Flag): (Seq[s.Expr], Seq[s.Type], (Seq[t.Expr], Seq[t.Type]) => t.Flag) = f match {
+    case s.Variance(v) =>
+      (Seq(), Seq(), (_, _) => t.Variance(v))
     case s.HasADTInvariant(id) =>
       (Seq(), Seq(), (_, _) => t.HasADTInvariant(id))
     case s.HasADTEquality(id) =>
@@ -284,6 +290,10 @@ trait Extractors { self: Trees =>
       case e =>
         Some(Seq(e))
     }
+  }
+
+  object CNF {
+    def unapply(e: Expr): Option[Seq[Expr]] = Some(exprOps.toCNF(e))
   }
 
   object IsTyped {

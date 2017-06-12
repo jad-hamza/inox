@@ -10,13 +10,14 @@ import scala.collection.generic.CanBuildFrom
 
 object optNoSimplifications extends FlagOptionDef("nosimplifications", false)
 
-trait Templates extends TemplateGenerator
-                   with FunctionTemplates
-                   with DatatypeTemplates
-                   with EqualityTemplates
-                   with LambdaTemplates
-                   with QuantificationTemplates
-                   with IncrementalStateWrapper {
+trait Templates
+  extends TemplateGenerator
+     with FunctionTemplates
+     with DatatypeTemplates
+     with EqualityTemplates
+     with LambdaTemplates
+     with QuantificationTemplates
+     with IncrementalStateWrapper {
 
   val program: Program
   import program._
@@ -509,7 +510,9 @@ trait Templates extends TemplateGenerator
     def lambdaPointers(encoder: Expr => Encoded)(expr: Expr): Map[Encoded, Encoded] = {
       def collectSelectors(expr: Expr, ptr: Expr): Seq[(Expr, Variable)] = expr match {
         case ADT(tpe, es) => (tpe.getADT.toConstructor.fields zip es).flatMap {
-          case (vd, e) => collectSelectors(e, ADTSelector(ptr, vd.id))
+          case (vd, e) =>
+            val ex = if (ptr.getType == tpe) ptr else AsInstanceOf(ptr, tpe)
+            collectSelectors(e, ADTSelector(ex, vd.id))
         }
 
         case Tuple(es) => es.zipWithIndex.flatMap {
@@ -809,7 +812,10 @@ trait Templates extends TemplateGenerator
 
     val tpeClauses = bindings.flatMap { case (v, s) => registerSymbol(encodedStart, s, v.getType) }.toSeq
 
+    val timer = ctx.timers.solvers.simplify.start()
     val instExpr = simplifyFormula(expr, simplify)
+    timer.stop()
+
     val tmplClauses = mkClauses(start, instExpr, bindings + (start -> encodedStart), polarity = Some(true))
 
     val (clauses, calls, apps, matchers, pointers, _) =

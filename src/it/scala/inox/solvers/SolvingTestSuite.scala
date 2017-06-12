@@ -6,16 +6,22 @@ package solvers
 trait SolvingTestSuite extends TestSuite {
 
   override def configurations = for {
-    solverName        <- Seq("nativez3", "unrollz3", "princess", "smt-z3", "smt-cvc4")
+    solverName        <- Seq("nativez3", "nativez3-opt", "unrollz3", "princess", "smt-z3", "smt-z3-opt", "smt-cvc4")
     checkModels       <- Seq(false, true)
     feelingLucky      <- Seq(false, true)
     unrollAssumptions <- Seq(false, true)
+    modelFinding      <- Seq(0, 1)
   } yield Seq(
     optSelectedSolvers(Set(solverName)),
     optCheckModels(checkModels),
     unrolling.optFeelingLucky(feelingLucky),
     unrolling.optUnrollAssumptions(unrollAssumptions),
+    unrolling.optModelFinding(modelFinding),
     optTimeout(300),
     ast.optPrintUniqueIds(true)
   )
+
+  override protected def optionsString(options: Options): String = {
+    super.optionsString(options) + " model=" + options.findOptionOrDefault(unrolling.optModelFinding)
+  }
 }

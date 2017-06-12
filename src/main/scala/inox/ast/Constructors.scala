@@ -3,6 +3,8 @@
 package inox
 package ast
 
+import inox.utils.{Position, NoPosition}
+
 /** Provides constructors for [[Expressions]].
   *
   * The constructors implement some logic to simplify the tree and
@@ -50,10 +52,15 @@ trait Constructors { self: Trees =>
       e
     }).distinct
 
+    val defaultPos = exprs match {
+      case Seq() => NoPosition
+      case es => Position.between(es.head.getPos, es.last.getPos)
+    }
+
     simpler match {
-      case Seq()  => BooleanLiteral(true)
+      case Seq()  => BooleanLiteral(true).setPos(defaultPos)
       case Seq(x) => x
-      case _      => And(simpler)
+      case _      => And(simpler).setPos(defaultPos)
     }
   }
 
@@ -77,10 +84,15 @@ trait Constructors { self: Trees =>
       e
     }
 
+    val defaultPos = exprs match {
+      case Seq() => NoPosition
+      case es => Position.between(es.head.getPos, es.last.getPos)
+    }
+
     simpler match {
-      case Seq()  => BooleanLiteral(false)
+      case Seq()  => BooleanLiteral(false).setPos(defaultPos)
       case Seq(x) => x
-      case _      => Or(simpler)
+      case _      => Or(simpler).setPos(defaultPos)
     }
   }
 
@@ -113,7 +125,9 @@ trait Constructors { self: Trees =>
   def equality(a: Expr, b: Expr): Expr = {
     if (a.isInstanceOf[Terminal] && a == b ) {
       BooleanLiteral(true)
-    } else  {
+    } else if (a.isInstanceOf[Literal[_]] && b.isInstanceOf[Literal[_]] && a != b) {
+      BooleanLiteral(false)
+    } else {
       Equals(a, b)
     }
   }
@@ -137,11 +151,42 @@ trait Constructors { self: Trees =>
   /** $encodingof simplified `forall(args, body)` (universal quantification).
     * @see [[Expressions.Forall Forall]]
     */
-  def forall(args: Seq[ValDef], body: Expr): Expr = body match {
-    case BooleanLiteral(true) => BooleanLiteral(true)
-    case _ =>
+  def forall(args: Seq[ValDef], body: Expr): Expr = {
+    if (body == BooleanLiteral(true)) BooleanLiteral(true)
+    else if (args.isEmpty) body
+    else {
       val vars = exprOps.variablesOf(body)
-      Forall(args.filter(vd => vars(vd.toVariable)), body)
+      val newArgs = args.filter(vd => vars(vd.toVariable))
+      if (newArgs.size == args.size) Forall(args, body)
+      else forall(newArgs, body)
+    }
+  }
+
+  def simpForall(args: Seq[ValDef], body: Expr): Expr = {
+    def liftForalls(es: Seq[Expr], recons: Seq[Expr] => Expr): Expr = {
+      val (allArgs, allBodies) = es.map {
+        case f: Forall =>
+          val Forall(args, body) = exprOps.freshenLocals(f)
+          (args, body)
+        case e =>
+          (Seq[ValDef](), e)
+      }.unzip
+
+      val flatArgs = allArgs.flatten
+      if (flatArgs.isEmpty) {
+        forall(args, recons(allBodies))
+      } else {
+        simpForall(args ++ flatArgs, recons(allBodies))
+      }
+    }
+
+    body match {
+      case Forall(args2, body) => simpForall(args ++ args2, body)
+      case And(es) => liftForalls(es, andJoin)
+      case Or(es) => liftForalls(es, orJoin)
+      case Implies(l, r) => liftForalls(Seq(l, r), es => implies(es(0), es(1)))
+      case _ => forall(args, body)
+    }
   }
 
   /** $encodingof simplified `... + ...` (plus).
@@ -150,8 +195,8 @@ trait Constructors { self: Trees =>
   def plus(lhs: Expr, rhs: Expr): Expr = (lhs, rhs) match {
     case (IntegerLiteral(bi), _) if bi == 0 => rhs
     case (_, IntegerLiteral(bi)) if bi == 0 => lhs
-    case (IntLiteral(0), _) => rhs
-    case (_, IntLiteral(0)) => lhs
+    case (bv: BVLiteral, _) if bv.toBigInt == 0 => rhs
+    case (_, bv: BVLiteral) if bv.toBigInt == 0 => lhs
     case (FractionLiteral(n, d), _) if n == 0 => rhs
     case (_, FractionLiteral(n, d)) if n == 0 => lhs
     case _ => Plus(lhs, rhs)
@@ -162,14 +207,14 @@ trait Constructors { self: Trees =>
     */
   def minus(lhs: Expr, rhs: Expr): Expr = (lhs, rhs) match {
     case (_, IntegerLiteral(bi)) if bi == 0 => lhs
-    case (_, IntLiteral(0)) => lhs
+    case (_, bv: BVLiteral) if bv.toBigInt == 0 => lhs
     case (IntegerLiteral(bi), _) if bi == 0 => UMinus(rhs)
     case _ => Minus(lhs, rhs)
   }
 
   def uminus(e: Expr): Expr = e match {
     case IntegerLiteral(bi) if bi == 0 => e
-    case IntLiteral(0) => e
+    case bv: BVLiteral if bv.toBigInt == 0 => e
     case IntegerLiteral(bi) if bi < 0 => IntegerLiteral(-bi)
     case _ => UMinus(e)
   }
@@ -182,10 +227,17 @@ trait Constructors { self: Trees =>
     case (_, IntegerLiteral(bi)) if bi == 1 => lhs
     case (IntegerLiteral(bi), _) if bi == 0 => IntegerLiteral(0)
     case (_, IntegerLiteral(bi)) if bi == 0 => IntegerLiteral(0)
-    case (IntLiteral(1), _) => rhs
-    case (_, IntLiteral(1)) => lhs
-    case (IntLiteral(0), _) => IntLiteral(0)
-    case (_, IntLiteral(0)) => IntLiteral(0)
+    case (bv: BVLiteral, _) if bv.toBigInt == 1 => rhs
+    case (_, bv: BVLiteral) if bv.toBigInt == 1 => lhs
+    case (bv: BVLiteral, _) if bv.toBigInt == 0 => lhs
+    case (_, bv: BVLiteral) if bv.toBigInt == 0 => rhs
     case _ => Times(lhs, rhs)
+  }
+
+  def mkLambda(args: Seq[ValDef], body: Expr, tpe: FunctionType): Lambda = tpe match {
+    case FunctionType(from, to: FunctionType) =>
+      val (currArgs, restArgs) = args.splitAt(from.size)
+      Lambda(currArgs, mkLambda(restArgs, body, to))
+    case _ => Lambda(args, body)
   }
 }

@@ -42,7 +42,7 @@ trait MainHelpers {
 
   protected def getOptions: Map[OptionDef[_], Description] = Map(
     optHelp -> Description(General, "Show help message"),
-    optTimeout -> Description(General, "Set a timeout for each proof attempt (in sec.)"),
+    optTimeout -> Description(General, "Set a timeout for the solver (in sec.)"),
     optSelectedSolvers -> Description(General, {
       "Use solvers s1,s2,...\nAvailable: " +
       solvers.SolverFactory.solverNames.toSeq.sortBy(_._1).map {
@@ -72,7 +72,7 @@ trait MainHelpers {
     evaluators.optIgnoreContracts -> Description(Evaluators, "Don't fail on invalid contracts during evaluation")
   )
 
-  protected final lazy val options = getOptions
+  final lazy val options = getOptions
 
   protected def getCategories: Seq[Category] = {
     General +: (options.map(_._2.category).toSet - General).toSeq.sortBy(_.toString)

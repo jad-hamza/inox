@@ -9,7 +9,10 @@ class SolversSuite extends FunSuite {
   import inox.trees._
   import SolverResponses._
 
-  implicit val ctx = TestContext.empty
+  implicit val ctx = TestContext.empty.copy(options = Options(Seq(
+    optCheckModels(true)
+  )))
+
   val p = InoxProgram(ctx, NoSymbols)
 
   import p._
@@ -27,7 +30,12 @@ class SolversSuite extends FunSuite {
     CharType,
     RealType,
     IntegerType,
+    Int8Type,
+    BVType(13),
+    Int16Type,
     Int32Type,
+    BVType(33),
+    Int64Type,
     StringType,
     TypeParameter.fresh("T"),
     SetType(IntegerType),
@@ -50,7 +58,7 @@ class SolversSuite extends FunSuite {
     case MapType(from, to) =>
       Not(Equals(MapApply(v, simplestValue(from)), simplestValue(to)))
     case FunctionType(froms, to) =>
-      Not(Equals(Application(v, froms.map(simplestValue)), simplestValue(to)))
+      Not(Equals(Application(v, froms.map(simplestValue(_))), simplestValue(to)))
     case _ =>
       not(Equals(v, simplestValue(v.getType)))
   })

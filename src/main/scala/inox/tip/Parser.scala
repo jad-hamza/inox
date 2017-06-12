@@ -6,8 +6,8 @@ package tip
 import utils._
 
 import smtlib.lexer.{Tokens => LT, _}
-import smtlib.parser.Commands.{FunDef => SMTFunDef, _}
-import smtlib.parser.Terms.{Let => SMTLet, Forall => SMTForall, Identifier => SMTIdentifier, _}
+import smtlib.trees.Commands.{FunDef => SMTFunDef, _}
+import smtlib.trees.Terms.{Let => SMTLet, Forall => SMTForall, Identifier => SMTIdentifier, _}
 import smtlib.theories._
 import smtlib.theories.experimental._
 import smtlib.extensions.tip.Terms.{Lambda => SMTLambda, Application => SMTApplication, _}
@@ -367,7 +367,7 @@ class Parser(file: File) {
   private def typeADTConstructor(id: Identifier, superType: Type)(implicit locals: Locals): ADTType = {
     val tcons = locals.symbols.getADT(id).typed(locals.symbols).toConstructor
     val troot = tcons.root.toType
-    locals.symbols.canBeSupertypeOf(troot, superType) match {
+    locals.symbols.instantiation_>:(troot, superType) match {
       case Some(tmap) => locals.symbols.instantiateType(tcons.toType, tmap).asInstanceOf[ADTType]
       case None => throw new MissformedTIPException(
         "cannot construct full typing for " + tcons,
@@ -385,13 +385,13 @@ class Parser(file: File) {
     val actual = bestRealType(tupleTypeWrap(actuals))
 
     // freshen the type parameters in case we're building a substitution that includes params from `tps`
-    val tpSubst: Map[Type, Type] = locals.symbols.typeParamsOf(actual).map(tp => tp -> tp.freshen).toMap
+    val tpSubst: Map[Type, Type] = typeParamsOf(actual).map(tp => tp -> tp.freshen).toMap
     val tpRSubst = tpSubst.map(_.swap)
-    val substActual = locals.symbols.typeOps.replace(tpSubst, actual)
+    val substActual = typeOps.replace(tpSubst, actual)
 
-    canBeSupertypeOf(formal, substActual) match {
+    instantiation_>:(formal, substActual) match {
       case Some(tmap) => tps.map(tpd => tmap.get(tpd.tp).map {
-        tpe => locals.symbols.typeOps.replace(tpRSubst, tpe)
+        tpe => typeOps.replace(tpRSubst, tpe)
       }.getOrElse(tpd.tp))
 
       case None => throw new MissformedTIPException(
@@ -515,11 +515,22 @@ class Parser(file: File) {
         }
         tfd.applied
 
-      case FunctionApplication(QualifiedIdentifier(SimpleIdentifier(sym), None), args)
+      case FunctionApplication(QualifiedIdentifier(SimpleIdentifier(sym), optSort), args)
       if ctx.isFunction(sym) =>
         val es = args.map(fromSMT(_))
         val fd = symbols.getFunction(ctx.getFunction(sym))
-        val tps = instantiateTypeParams(fd.tparams, fd.params.map(_.tpe), es.map(_.getType))(ctx.locals)
+        val tps = optSort match {
+          case Some(sort) =>
+            val tpe = fromSMT(sort)
+            instantiateTypeParams(
+              fd.tparams,
+              fd.params.map(_.tpe) :+ fd.returnType,
+              es.map(_.getType) :+ tpe
+            )(ctx.locals)
+
+          case None =>
+            instantiateTypeParams(fd.tparams, fd.params.map(_.tpe), es.map(_.getType))(ctx.locals)
+        }
         val tfd = fd.typed(tps)
         tfd.applied(wrapAsInstanceOf(tfd.params.map(_.tpe), es)(ctx.locals))
 

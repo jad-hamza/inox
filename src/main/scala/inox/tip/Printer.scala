@@ -3,8 +3,8 @@
 package inox
 package tip
 
-import smtlib.parser.Terms.{Forall => SMTForall, Identifier => SMTIdentifier, _}
-import smtlib.parser.Commands.{Constructor => SMTConstructor, _}
+import smtlib.trees.Terms.{Forall => SMTForall, Identifier => SMTIdentifier, _}
+import smtlib.trees.Commands.{Constructor => SMTConstructor, _}
 import smtlib.theories._
 import smtlib.theories.experimental._
 import smtlib.extensions.tip.Terms.{Lambda => SMTLambda, Application => SMTApplication, _}
@@ -46,7 +46,7 @@ class Printer(val program: InoxProgram, writer: Writer) extends solvers.smtlib.S
       writer.write("\n")
       writer.flush()
 
-      smtlib.parser.CommandsResponses.Success
+      smtlib.trees.CommandsResponses.Success
     }
 
     def free(): Unit = {
@@ -280,7 +280,7 @@ class Printer(val program: InoxProgram, writer: Writer) extends solvers.smtlib.S
         val sym = id2sym(vd.id)
         (vd.id -> (sym: Term), SortedVar(sym, declareSort(vd.tpe)))
       }.unzip
-      Exists(param, params, toSMT(body)(bindings ++ newBindings))
+      Exists(param, params, toSMT(Not(body))(bindings ++ newBindings))
 
     case Application(caller, args) => SMTApplication(toSMT(caller), args.map(toSMT))
 
@@ -317,7 +317,8 @@ class Printer(val program: InoxProgram, writer: Writer) extends solvers.smtlib.S
     case StringLength(s) => Strings.Length(toSMT(s))
 
     case ADT(tpe @ ADTType(id, tps), es) =>
-      val tcons = tpe.getADT.definition.typed.toConstructor
+      val d = tpe.getADT.definition
+      val tcons = d.typed(d.root.typeArgs).toConstructor
       val adt = tcons.toType
       val sort = declareSort(tpe)
       val constructor = constructors.toB(adt)
@@ -329,14 +330,16 @@ class Printer(val program: InoxProgram, writer: Writer) extends solvers.smtlib.S
       }
 
     case s @ ADTSelector(e, id) =>
-      val tcons = e.getType.asInstanceOf[ADTType].getADT.definition.typed.toConstructor
+      val d = e.getType.asInstanceOf[ADTType].getADT.definition
+      val tcons = d.typed(d.root.typeArgs).toConstructor
       val adt = tcons.toType
       declareSort(adt)
       val selector = selectors.toB(adt -> s.selectorIndex)
       FunctionApplication(selector, Seq(toSMT(e)))
 
     case IsInstanceOf(e, t: ADTType) =>
-      val tdef = t.getADT.definition.typed
+      val d = t.getADT.definition
+      val tdef = d.typed(d.root.typeArgs)
       if (tdef.definition.isSort) {
         toSMT(BooleanLiteral(true))
       } else {
@@ -358,11 +361,20 @@ class Printer(val program: InoxProgram, writer: Writer) extends solvers.smtlib.S
       val selector = selectors.toB((tpe, i - 1))
       FunctionApplication(selector, Seq(toSMT(t)))
 
-    case fi @ FunctionInvocation(id, tps, Seq()) if tps.nonEmpty =>
-      QualifiedIdentifier(
-        SMTIdentifier(declareFunction(fi.tfd)),
-        Some(declareSort(fi.tfd.returnType))
-      )
+    case fi @ FunctionInvocation(id, tps, args) =>
+      val tfd = fi.tfd
+      val retTpArgs = typeParamsOf(tfd.fd.returnType)
+      val paramTpArgs = tfd.fd.params.flatMap(vd => typeParamsOf(vd.tpe)).toSet
+      if ((retTpArgs -- paramTpArgs).nonEmpty) {
+        val caller = QualifiedIdentifier(
+          SMTIdentifier(declareFunction(tfd)),
+          Some(declareSort(tfd.returnType))
+        )
+        if (args.isEmpty) caller
+        else FunctionApplication(caller, args.map(toSMT))
+      } else {
+        super.toSMT(e)
+      }
 
     case Choose(vd, pred) =>
       val sym = id2sym(vd.id)

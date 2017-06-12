@@ -86,8 +86,8 @@ trait AbstractUnrollingSolver extends Solver { self =>
   def check(config: CheckConfiguration): config.Response[Model, Assumptions] =
     checkAssumptions(config)(Set.empty)
 
+  protected val freeVars  = new IncrementalMap[Variable, Encoded]()
   private val constraints = new IncrementalSeq[Expr]()
-  private val freeVars    = new IncrementalMap[Variable, Encoded]()
   private val freeChooses = new IncrementalMap[Choose, Encoded]()
 
   protected var abort: Boolean = false
@@ -126,6 +126,11 @@ trait AbstractUnrollingSolver extends Solver { self =>
   private[this] var reported = false
 
   def assertCnstr(expression: Expr): Unit = {
+    val timer = ctx.timers.solvers.assert.start()
+
+    symbols.ensureWellFormed // make sure that the current program is well-formed
+    typeCheck(expression, BooleanType) // make sure we've asserted a boolean-typed expression
+
     constraints += expression
 
     val freeBindings: Map[Variable, Encoded] = exprOps.variablesOf(expression).map {
@@ -149,6 +154,8 @@ trait AbstractUnrollingSolver extends Solver { self =>
     for (cl <- newClauses) {
       underlying.assertCnstr(cl)
     }
+
+    timer.stop()
   }
 
   protected def wrapModel(model: underlying.Model): ModelWrapper
@@ -160,6 +167,8 @@ trait AbstractUnrollingSolver extends Solver { self =>
     def extractSet(elem: Encoded, tpe: t.SetType): Option[Seq[Encoded]]
     def extractMap(elem: Encoded, tpe: t.MapType): Option[(Seq[(Encoded, Encoded)], Encoded)]
     def extractBag(elem: Encoded, tpe: t.BagType): Option[Seq[(Encoded, Encoded)]]
+
+    def getChoose(id: Identifier): Option[t.Expr]
 
     def eval(elem: Encoded, tpe: Type): Option[Expr] = modelEval(elem, encode(tpe)).flatMap {
       expr => try {
@@ -183,7 +192,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
             import templates._
 
             val tvds = vds.map(vd => vd.copy(tpe = instantiateType(vd.tpe, tpSubst)))
-            val tc = instantiateType(c, tpSubst)
+            val tc = instantiateType(c.copy(res = c.res.freshen), tpSubst)
 
             val mappings = calls.flatMap { call =>
               val optArgs = (call.args zip from).map(p => modelEval(p._1.encoded, p._2))
@@ -207,7 +216,15 @@ trait AbstractUnrollingSolver extends Solver { self =>
 
       val freeCs = freeChooses.toMap.map { case (c, idT) => (c.res.id, Seq.empty[Type]) -> extract(idT, c.res.tpe) }
 
-      inox.Model(program)(vs, cs ++ freeCs)
+      def choosesOf(e: Expr, tps: Seq[Type]): Map[(Identifier, Seq[Type]), Expr] = exprOps.collect {
+        case c: Choose => getChoose(c.res.id).map(e => (c.res.id, tps) -> decode(e)).toSet
+        case _ => Set.empty[((Identifier, Seq[Type]), Expr)]
+      } (e).toMap
+
+      val modelCs = vs.values.toSeq.flatMap(e => choosesOf(e, Seq.empty)) ++
+        (cs ++ freeCs).flatMap { case ((id, tps), e) => choosesOf(e, tps) }
+
+      inox.Model(program)(vs, cs ++ freeCs ++ modelCs)
     }
   }
 
@@ -252,9 +269,13 @@ trait AbstractUnrollingSolver extends Solver { self =>
     import targetProgram.symbols._
 
     // maintain extracted functions to make sure equality is well-defined
-    var funExtractions: Seq[(Encoded, Lambda)] = Seq.empty
+    var lambdaExtractions: Seq[(Encoded, Lambda)] = Seq.empty
+    var chooseExtractions: Seq[(Encoded, Choose)] = Seq.empty
 
-    def extractValue(v: Encoded, tpe: Type): Expr = {
+    def modelEq(e1: Encoded, e2: Encoded): Boolean =
+      wrapped.modelEval(templates.mkEquals(e1, e2), BooleanType) == Some(BooleanLiteral(true))
+
+    def extractValue(v: Encoded, tpe: Type, seen: Map[FunctionType, Set[Encoded]]): Expr = {
 
       def functionsOf(v: Encoded, tpe: Type): (Seq[(Encoded, FunctionType)], Seq[Expr] => Expr) = {
         def reconstruct(subs: Seq[(Seq[(Encoded, FunctionType)], Seq[Expr] => Expr)],
@@ -313,7 +334,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
       if (ev.isDefined) {
         val (functions, recons) = functionsOf(v, tpe)
         recons(functions.map { case (f, tpe) =>
-          extractFunction(f, bestRealType(tpe).asInstanceOf[FunctionType])
+          extractFunction(f, bestRealType(tpe).asInstanceOf[FunctionType], seen)
         })
       } else {
         encode(program.symbols.simplestValue(decode(tpe)))
@@ -355,16 +376,18 @@ trait AbstractUnrollingSolver extends Solver { self =>
       }
     }
 
-    def extractFunction(f: Encoded, tpe: FunctionType): Expr = {
+    def extractFunction(f: Encoded, tpe: FunctionType, seen: Map[FunctionType, Set[Encoded]]): Expr = {
+      val nextSeen = seen + (tpe -> (seen(tpe) + f))
+
       def extractLambda(f: Encoded, tpe: FunctionType): Option[Lambda] = {
         val optEqTemplate = templates.getLambdaTemplates(tpe).find { tmpl =>
           wrapped.modelEval(tmpl.start, BooleanType) == Some(BooleanLiteral(true)) &&
-          wrapped.modelEval(templates.mkEquals(tmpl.ids._2, f), BooleanType) == Some(BooleanLiteral(true))
+          modelEq(tmpl.ids._2, f)
         }
 
         optEqTemplate.map { tmpl =>
           val localsSubst = tmpl.structure.locals.map { case (v, ev) =>
-            v -> extractValue(ev, v.tpe)
+            v -> extractValue(ev, v.tpe, nextSeen)
           }.toMap
 
           val res = exprOps.replaceFromSymbols(localsSubst, tmpl.structure.body)
@@ -380,19 +403,21 @@ trait AbstractUnrollingSolver extends Solver { self =>
         arguments: Seq[Seq[(Seq[Encoded], Expr)]],
         dflt: Expr
       ): (Lambda, Boolean) = {
-        if (tpe.from.isEmpty) {
-          val (result, real) = tpe.to match {
-            case ft: FunctionType =>
-              val nextParams = params.tail
-              val nextArguments = arguments.map(_.tail)
-              extract(templates.mkApp(caller, tpe, Seq.empty), ft, nextParams, nextArguments, dflt)
-            case _ =>
-              (extractValue(templates.mkApp(caller, tpe, Seq.empty), tpe.to), false)
-          }
+        extractLambda(caller, tpe).map(_ -> true).getOrElse {
+          if (tpe.from.isEmpty) {
+            val (result, real) = tpe.to match {
+              case ft: FunctionType =>
+                val nextParams = params.tail
+                val nextArguments = arguments.map(_.tail)
+                extract(templates.mkApp(caller, tpe, Seq.empty), ft, nextParams, nextArguments, dflt)
+              case _ =>
+                (extractValue(templates.mkApp(caller, tpe, Seq.empty), tpe.to, nextSeen), false)
+            }
 
-          (Lambda(Seq.empty, result), real)
-        } else {
-          extractLambda(caller, tpe).map(_ -> true).getOrElse {
+            val res = Lambda(Seq.empty, result)
+            lambdaExtractions :+= f -> res
+            (res, real)
+          } else {
             val byCondition = arguments.groupBy(_.head._2).toSeq.sortBy(p => -exprOps.formulaSize(p._1))
             val mappings = byCondition.flatMap {
               case (currCond, arguments) => tpe.to match {
@@ -410,19 +435,20 @@ trait AbstractUnrollingSolver extends Solver { self =>
 
                 case _ =>
                   val currArgs = arguments.head.head._1
-                  val res = extractValue(templates.mkApp(caller, tpe, currArgs), tpe.to)
+                  val res = extractValue(templates.mkApp(caller, tpe, currArgs), tpe.to, nextSeen)
                   Seq(currCond -> res)
               }
             }
 
             val lambda = FiniteLambda(params, mappings, dflt)
+
             // make sure `lambda` is not equal to any other distinct extracted first-class function
-            val res = (funExtractions.collectFirst {
-              case (encoded, `lambda`) => Right(encoded)
+            val res = (lambdaExtractions.collectFirst {
               case (e, img) if (
                 bestRealType(img.getType) == bestRealType(lambda.getType) &&
-                wrapped.modelEval(templates.mkEquals(e, f), BooleanType) == Some(BooleanLiteral(true))
-              )=> Left(img)
+                modelEq(e, f)
+              ) => Left(img)
+              case (encoded, `lambda`) => Right(encoded)
             }) match {
               case Some(Right(enc)) => wrapped.modelEval(enc, tpe).get match {
                 case Lambda(_, Let(_, Tuple(es), _)) =>
@@ -433,7 +459,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
               case None => lambda
             }
 
-            funExtractions :+= f -> res
+            lambdaExtractions :+= f -> res
 
             (res, false)
           }
@@ -453,19 +479,35 @@ trait AbstractUnrollingSolver extends Solver { self =>
         wrapped.modelEval(b, BooleanType).filter(_ == BooleanLiteral(true)).map(_ => eArgs)
       }.distinct
 
-      extractLambda(f, tpe).getOrElse {
+      extractLambda(f, tpe).orElse {
+        if (seen(tpe).exists(e => modelEq(f, e))) {
+          Some(chooseExtractions.collectFirst { case (e, c) if modelEq(f, e) => c }.getOrElse {
+            val c = Choose(Variable.fresh("x", tpe, true).toVal, BooleanLiteral(true))
+            chooseExtractions :+= f -> c
+            c
+          })
+        } else {
+          None
+        }
+      }.getOrElse {
         if (arguments.isEmpty) {
-          wrapped.modelEval(f, tpe).get
+          val res = wrapped.modelEval(f, tpe).get.asInstanceOf[Lambda]
+          lambdaExtractions :+= f -> res
+          res
         } else {
           val projections: Map[Type, Encoded] = (arguments.head zip params.flatten)
             .groupBy(p => bestRealType(p._2.tpe))
             .mapValues(_.head._1)
 
+          val exArguments = for (args <- arguments) yield {
+            (params.flatten zip args).map { case (vd, arg) => extractValue(arg, vd.tpe, nextSeen) }
+          }
+
           val flatArguments: Seq[(Seq[Encoded], Seq[Option[Expr]])] =
-            (for (subset <- params.flatten.toSet.subsets; args <- arguments) yield {
+            (for (subset <- params.flatten.toSet.subsets; (args, exArgs) <- arguments zip exArguments) yield {
               val (concreteArgs, condOpts) = params.flatten.zipWithIndex.map { case (v, i) =>
                 if (!subset(v)) {
-                  (args(i), Some(Equals(v.toVariable, extractValue(args(i), v.tpe))))
+                  (args(i), Some(Equals(v.toVariable, exArgs(i))))
                 } else {
                   (projections(bestRealType(v.tpe)), None)
                 }
@@ -491,17 +533,27 @@ trait AbstractUnrollingSolver extends Solver { self =>
           val (app, to) = unflatten(flatArguments.last._1).foldLeft(f -> (tpe: Type)) {
             case ((f, tpe: FunctionType), args) => (templates.mkApp(f, tpe, args), tpe.to)
           }
-          val default = extractValue(app, to)
+          val default = extractValue(app, to, nextSeen)
 
           extract(f, tpe, params, allArguments, default)._1
         }
       }
     }
 
-    wrapped.getModel((e, tpe) => decode(extractValue(e, encode(tpe))))
+    val initSeen: Map[FunctionType, Set[Encoded]] = Map.empty.withDefaultValue(Set.empty)
+    val exModel = wrapped.getModel((e, tpe) => decode(extractValue(e, encode(tpe), initSeen)))
+    val exChooses = chooseExtractions.toMap.map { case (e, c) =>
+      c -> lambdaExtractions.collectFirst {
+        case (f, lambda) if bestRealType(lambda.getType) == bestRealType(c.res.tpe) && modelEq(f, e) => lambda
+      }.get
+    }
+    val chooses = exChooses.map(p => (p._1.res.id, Seq.empty[s.Type]) -> decode(p._2))
+    inox.Model(program)(exModel.vars, exModel.chooses ++ chooses)
   }
 
   def checkAssumptions(config: Configuration)(assumptions: Set[Expr]): config.Response[Model, Assumptions] = {
+    val timer = ctx.timers.solvers.unrolling.start()
+
     val assumptionsSeq       : Seq[Expr]          = assumptions.toSeq
     val encodedAssumptions   : Seq[Encoded]       = assumptionsSeq.map { expr =>
       val vars = exprOps.variablesOf(expr)
@@ -554,7 +606,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
             .min(Configuration(model = getModel, unsatAssumptions = true))
             .max(Configuration(model = false, unsatAssumptions = unrollAssumptions && templates.canUnroll))
 
-          val timer = ctx.timers.solvers.check.start()
+          val timer = ctx.timers.solvers.unrolling.check.start()
           val res: SolverResponse[underlying.Model, Set[underlying.Trees]] =
             underlying.checkAssumptions(checkConfig)(
               encodedAssumptions.toSet ++ templates.satisfactionAssumptions
@@ -592,7 +644,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
 
           val clauses = templates.getFiniteRangeClauses
 
-          val timer = ctx.timers.solvers.check.start()
+          val timer = ctx.timers.solvers.unrolling.check.start()
           underlying.push()
           for (cl <- encodedAssumptions.toSeq ++ templates.satisfactionAssumptions ++ clauses) {
             underlying.assertCnstr(cl)
@@ -625,7 +677,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
           val valid = !checkModels || validateModel(model, assumptionsSeq, silenceErrors = silentErrors)
 
           if (checkModels && valid) {
-            CheckResult(config cast SatWithModel(model))
+            CheckResult(config cast satResult)
           } else if (abort || pause) {
             CheckResult cast Unknown
           } else if (checkModels && !valid) {
@@ -639,7 +691,9 @@ trait AbstractUnrollingSolver extends Solver { self =>
             val wrapped = wrapModel(umodel)
             val optError = templates.getQuantifications.view.flatMap { q =>
               if (wrapped.modelEval(q.holds, t.BooleanType) != Some(t.BooleanLiteral(false))) {
-                q.checkForall.map(err => q.body -> err)
+                q.checkForall { (e1, e2) =>
+                  wrapped.modelEval(templates.mkEquals(e1, e2), t.BooleanType) == Some(t.BooleanLiteral(true))
+                }.map(err => q.body -> err)
               } else {
                 None
               }
@@ -679,7 +733,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
             reporter.debug(" - Running search without blocked literals (w/o lucky test)")
           }
 
-          val timer = ctx.timers.solvers.check.start()
+          val timer = ctx.timers.solvers.unrolling.check.start()
 
           // we always ask for a model here in order to give priority to blockers that
           // are keeping quantified clause instantiations from being considered
@@ -699,8 +753,17 @@ trait AbstractUnrollingSolver extends Solver { self =>
               CheckResult.cast(res)
 
             case SatWithModel(model) =>
-              if (feelingLucky && validateModel(extractSimpleModel(model), assumptionsSeq, silenceErrors = true)) {
-                if (config.withModel) CheckResult.cast(res) else CheckResult.cast(Sat)
+              lazy val luckyModel = if (!feelingLucky) None else {
+                val exModel = extractSimpleModel(model)
+                if (validateModel(exModel, assumptionsSeq, silenceErrors = true)) {
+                  Some(exModel)
+                } else {
+                  None
+                }
+              }
+
+              if (luckyModel.isDefined) {
+                CheckResult(config cast (if (config.withModel) SatWithModel(luckyModel.get) else Sat))
               } else {
                 val wrapped = wrapModel(model)
 
@@ -725,7 +788,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
         case Unroll =>
           reporter.debug("- We need to keep going")
 
-          val timer = ctx.timers.solvers.unroll.start()
+          val timer = ctx.timers.solvers.unrolling.unroll.start()
           // unfolling `unrollFactor` times
           for (i <- 1 to unrollFactor.toInt if templates.canUnroll && !abort && !pause) {
             val newClauses = templates.unroll
@@ -741,6 +804,7 @@ trait AbstractUnrollingSolver extends Solver { self =>
     }
 
     val CheckResult(res) = currentState
+    timer.stop()
     res
   }
 }
@@ -814,6 +878,7 @@ trait UnrollingSolver extends AbstractUnrollingSolver { self =>
     }
 
     def modelEval(elem: t.Expr, tpe: t.Type): Option[t.Expr] = e(elem)
+    def getChoose(id: Identifier): Option[t.Expr] = model.chooses.find(_._1 == id).map(_._2)
 
     override def toString = model.asString
   }

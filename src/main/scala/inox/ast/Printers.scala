@@ -11,8 +11,9 @@ object optPrintPositions extends FlagOptionDef("printpositions", false)
 object optPrintUniqueIds extends FlagOptionDef("printids",       false)
 object optPrintTypes     extends FlagOptionDef("printtypes",     false)
 
-trait Printers {
-  self: Trees =>
+trait Printers { self: Trees =>
+
+  val printer: Printer { val trees: self.type }
 
   case class PrinterContext(current: Tree,
                             parents: List[Tree],
@@ -55,14 +56,22 @@ trait Printers {
     def asString(implicit opts: PrinterOptions): String
   }
 
-  /** This pretty-printer uses Unicode for some operators, to make sure we
-    * distinguish PureScala from "real" Scala (and also because it's cute). */
-  class PrettyPrinter(val opts: PrinterOptions,
-                      osym: Option[Symbols],
-                      val sb: StringBuffer = new StringBuffer) {
-
-    override def toString = sb.toString
+  def asString(obj: Any)(implicit opts: PrinterOptions): String = obj match {
+    case tree: Tree => prettyPrint(tree, opts)
+    case id: Identifier => id.asString
+    case _ => obj.toString
   }
+
+  def prettyPrint(tree: Tree, opts: PrinterOptions = PrinterOptions()): String = {
+    val ctx = PrinterContext(tree, Nil, opts.baseIndent, opts)
+    printer.pp(tree)(ctx)
+    ctx.sb.toString
+  }
+}
+
+trait Printer {
+  protected val trees: Trees
+  import trees._
 
   protected def optP(body: => Any)(implicit ctx: PrinterContext) = {
     if (requiresParentheses(ctx.current, ctx.parent)) {
@@ -146,7 +155,10 @@ trait Printers {
     case SubString(expr, start, end) => p"$expr.substring($start, $end)"
     case StringLength(expr) => p"$expr.length"
 
-    case IntLiteral(v) => p"$v"
+    case Int8Literal(v) => p"$v"
+    case Int16Literal(v) => p"$v"
+    case Int32Literal(v) => p"$v"
+    case Int64Literal(v) => p"$v"
     case BVLiteral(bits, size) => p"x${(size to 1 by -1).map(i => if (bits(i)) "1" else "0")}"
     case IntegerLiteral(v) => p"$v"
     case FractionLiteral(n, d) =>
@@ -237,13 +249,23 @@ trait Printers {
     case BVLShiftRight(l, r) => optP {
       p"$l >>> $r"
     }
-    case fs @ FiniteSet(rs, _) => p"{${rs.distinct}}"
-    case fs @ FiniteBag(rs, _) => p"{${rs.toMap.toSeq}}"
+
+    case BVNarrowingCast(e, Int8Type)  => p"$e.toByte"
+    case BVNarrowingCast(e, Int16Type)  => p"$e.toShort"
+    case BVNarrowingCast(e, Int32Type) => p"$e.toInt"
+    case BVNarrowingCast(e, Int64Type)  => p"$e.toLong"
+    case BVWideningCast(e, Int8Type)   => p"$e.toByte"
+    case BVWideningCast(e, Int16Type)   => p"$e.toShort"
+    case BVWideningCast(e, Int32Type)  => p"$e.toInt"
+    case BVWideningCast(e, Int64Type)   => p"$e.toLong"
+
+    case fs @ FiniteSet(rs, _) => p"{${rs}}"
+    case fs @ FiniteBag(rs, _) => p"{${rs.toSeq}}"
     case fm @ FiniteMap(rs, dflt, _, _) =>
       if (rs.isEmpty) {
         p"{* -> $dflt}"
       } else {
-        p"{${rs.toMap.toSeq}, * -> $dflt}"
+        p"{${rs.toSeq}, * -> $dflt}"
       }
     case Not(ElementOfSet(e, s)) => p"$e \u2209 $s"
     case ElementOfSet(e, s) => p"$e \u2208 $s"
@@ -274,7 +296,11 @@ trait Printers {
     case (tfd: TypedFunDef) => p"typed def ${tfd.id}[${tfd.tps}]"
     case (afd: TypedADTDefinition) => p"typed class ${afd.id}[${afd.tps}]"
 
-    case tpd: TypeParameterDef => p"${tpd.tp}"
+    case tpd: TypeParameterDef =>
+      if (tpd.tp.isCovariant) p"+"
+      else if (tpd.tp.isContravariant) p"-"
+      p"${tpd.tp}"
+
     case TypeParameter(id, flags) =>
       p"$id"
       for (f <- flags) p" @${f.asString(ctx.opts)}"
@@ -298,7 +324,10 @@ trait Printers {
     // Types
     case Untyped => p"<untyped>"
     case UnitType => p"Unit"
+    case Int8Type => p"Byte"
+    case Int16Type => p"Short"
     case Int32Type => p"Int"
+    case Int64Type => p"Long"
     case IntegerType => p"BigInt"
     case RealType => p"Real"
     case CharType => p"Char"
@@ -314,9 +343,13 @@ trait Printers {
 
     // Definitions
     case sort: ADTSort =>
+      for (an <- sort.flags) p"""|@${an.asString(ctx.opts)}
+                                 |"""
       p"abstract class ${sort.id}${nary(sort.tparams, ", ", "[", "]")}"
 
     case cons: ADTConstructor =>
+      for (an <- cons.flags) p"""|@${an.asString(ctx.opts)}
+                                 |"""
       p"case class ${cons.id}"
       p"${nary(cons.tparams, ", ", "[", "]")}"
       p"(${cons.fields})"
@@ -381,6 +414,7 @@ trait Printers {
   protected def noBracesSub(e: Tree): Seq[Expr] = e match {
     case Let(_, _, bd) => Seq(bd)
     case IfExpr(_, t, e) => Seq(t, e) // if-else always has braces anyway
+    case Assume(_, bd) => Seq(bd)
     case _ => Seq()
   }
 
@@ -419,7 +453,7 @@ trait Printers {
   protected def requiresParentheses(ex: Tree, within: Option[Tree]): Boolean = (ex, within) match {
     case (_, None) => false
     case (_, Some(
-    _: Definition | _: Let | _: IfExpr | _: ADT | _: Lambda | _: Choose | _: Tuple
+      _: Definition | _: Let | _: IfExpr | _: ADT | _: Lambda | _: Choose | _: Tuple | _: Assume
     )) => false
     case (ex: StringConcat, Some(_: StringConcat)) => false
     case (_, Some(_: FunctionInvocation)) => false
@@ -522,17 +556,5 @@ trait Printers {
 
   def typed(ts: Seq[Tree with Typed])(implicit s: Symbols): PrintWrapper = {
     nary(ts.map(typed))
-  }
-
-  def prettyPrint(tree: Tree, opts: PrinterOptions = PrinterOptions()): String = {
-    val ctx = PrinterContext(tree, Nil, opts.baseIndent, opts)
-    pp(tree)(ctx)
-    ctx.sb.toString
-  }
-
-  def asString(obj: Any)(implicit opts: PrinterOptions): String = obj match {
-    case tree: Tree => prettyPrint(tree, opts)
-    case id: Identifier => id.asString
-    case _ => obj.toString
   }
 }

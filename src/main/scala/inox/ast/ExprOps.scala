@@ -66,15 +66,20 @@ trait ExprOps extends GenTreeOps {
     }(expr)
   }
 
-  /** Freshens all local variables */
-  def freshenLocals(expr: Expr): Expr = {
+  /** Freshens all local variables
+    * 
+    * Note that we don't freshen choose ids as these are considered global
+    * and used to lookup their images within models!
+    */
+  def freshenLocals(expr: Expr, freshenChooses: Boolean = false): Expr = {
     def rec(expr: Expr, bindings: Map[Variable, Variable]): Expr = expr match {
       case v: Variable => bindings(v)
+      case c: Choose if !freshenChooses => replaceFromSymbols(bindings, c)
       case _ =>
         val (vs, es, tps, recons) = deconstructor.deconstruct(expr)
         val newVs = vs.map(_.freshen)
         val newBindings = bindings ++ (vs zip newVs)
-        recons(newVs, es map (rec(_, newBindings)), tps)
+        recons(newVs, es map (rec(_, newBindings)), tps).copiedFrom(expr)
     }
 
     rec(expr, variablesOf(expr).map(v => v -> v).toMap)
@@ -136,8 +141,8 @@ trait ExprOps extends GenTreeOps {
       case StringConcat(StringLiteral(""), b) => b
       case StringConcat(b, StringLiteral("")) => b
       case StringConcat(StringLiteral(a), StringLiteral(b)) => StringLiteral(a + b)
-      case StringLength(StringLiteral(a)) => IntLiteral(a.length)
-      case SubString(StringLiteral(a), IntLiteral(start), IntLiteral(end)) =>
+      case StringLength(StringLiteral(a)) => IntegerLiteral(a.length)
+      case SubString(StringLiteral(a), IntegerLiteral(start), IntegerLiteral(end)) =>
         StringLiteral(a.substring(start.toInt, end.toInt))
       case _ => expr
     }).copiedFrom(expr)
@@ -260,5 +265,20 @@ trait ExprOps extends GenTreeOps {
         FractionLiteral(n / d - 1, 1)
       }
     }
+  }
+
+  def toCNF(e: Expr): Seq[Expr] = e match {
+    case Let(i, e, b) => toCNF(b).map(b => Let(i, e, b))
+    case And(es) => es.flatMap(toCNF)
+    case Or(es) => es.map(toCNF).foldLeft(Seq[Expr](BooleanLiteral(false))) {
+      case (clauses, es) => es.flatMap(e => clauses.map(c => or(c, e)))
+    }
+    case IfExpr(c, t, e) => toCNF(and(implies(c, t), implies(not(c), e)))
+    case Implies(l, r) => toCNF(or(not(l), r))
+    case Not(Or(es)) => toCNF(andJoin(es.map(not)))
+    case Not(Implies(l, r)) => toCNF(and(l, not(r)))
+    case Not(Not(e)) => toCNF(e)
+    case Not(e) => Seq(not(e))
+    case e => Seq(e)
   }
 }

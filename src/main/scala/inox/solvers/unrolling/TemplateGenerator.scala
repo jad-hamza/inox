@@ -294,7 +294,7 @@ trait TemplateGenerator { self: Templates =>
                 val newRes: Variable = Variable.fresh("res", BooleanType, true)
                 storeExpr(newRes)
 
-                val xrec = rec(pathVar, x, pol)
+                val xrec = rec(pathVar, x, None)
                 storeGuarded(pathVar, Equals(newRes, xrec))
 
                 val newBool: Variable = Variable.fresh("b", BooleanType, true)
@@ -369,7 +369,7 @@ trait TemplateGenerator { self: Templates =>
           }
 
           if (conjArgs.isEmpty) {
-            conj
+            rec(pathVar, conj, pol)
           } else {
             val forall = Forall(conjArgs, conj)
             val (optVar, template) = QuantificationTemplate(pathVar -> encodedCond(pathVar), pol, forall, localSubst)

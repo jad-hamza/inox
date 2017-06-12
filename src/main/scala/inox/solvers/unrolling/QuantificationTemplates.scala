@@ -212,7 +212,7 @@ trait QuantificationTemplates { self: Templates =>
       ), depSubst ++ extraSubst)
 
       (optVar, new QuantificationTemplate(polarity, contents, structure,
-        forall.body, () => "Template for " + forall.asString + " is :\n" + str(), false))
+        body, () => "Template for " + forall.asString + " is :\n" + str(), false))
     }
   }
 
@@ -368,7 +368,7 @@ trait QuantificationTemplates { self: Templates =>
   private case class FunctionKey(tfd: TypedFunDef) extends MatcherKey
   private sealed abstract class TypedKey(val tpe: Type) extends MatcherKey
   private case class LambdaKey(lambda: Lambda, tt: Type) extends TypedKey(tt)
-  private case class CallerKey(caller: Encoded, tt: Type) extends TypedKey(tt)
+  private case class CallerKey(caller: Encoded, tt: FunctionType) extends TypedKey(tt)
   private case class TypeKey(tt: Type) extends TypedKey(tt)
 
   private def matcherKey(key: Either[(Encoded, Type), TypedFunDef]): MatcherKey = key match {
@@ -762,8 +762,16 @@ trait QuantificationTemplates { self: Templates =>
 
     protected def registerBlockers(substituter: Encoded => Encoded): Unit = ()
 
-    def checkForall: Option[String] = {
+    def checkForall(modelEq: (Encoded, Encoded) => Boolean): Option[String] = {
       val quantified = quantifiers.map(_._1).toSet
+
+      if (constraints.exists {
+        case (_, _: LambdaKey, _) => true
+        case (_, _: FunctionKey, _) => true
+        case (_, CallerKey(caller, tt), _) =>
+          byType(tt).values.exists(t => modelEq(t.ids._2, caller))
+        case _ => false
+      }) return Some("Can't guarantee model for complex matchers.")
 
       val matchers = exprOps.collect[(Expr, Seq[Expr])] {
         case QuantificationMatcher(e, args) => Set(e -> args)
@@ -780,10 +788,6 @@ trait QuantificationTemplates { self: Templates =>
         }))
       }
 
-      val bijectiveMappings = matcherToQuants.filter(_._2.nonEmpty).groupBy(_._2)
-      if (bijectiveMappings.size > 1)
-        return Some("Non-bijective mapping for symbol " + bijectiveMappings.head._2.head._1.asString)
-
       def quantifiedArg(e: Expr): Boolean = e match {
         case v: Variable => quantified(v)
         case QuantificationMatcher(_, args) => args.forall(quantifiedArg)
@@ -791,11 +795,7 @@ trait QuantificationTemplates { self: Templates =>
       }
 
       exprOps.postTraversal(m => m match {
-        case QuantificationMatcher(_, args) =>
-          val qArgs = args.filter(quantifiedArg)
-
-          if (qArgs.nonEmpty && qArgs.size < args.size)
-            return Some("Mixed ground and quantified arguments in " + m.asString)
+        case QuantificationMatcher(_, args) => // OK
 
         case Operator(es, _) if es.collect { case v: Variable if quantified(v) => v }.nonEmpty =>
           return Some("Invalid operation on quantifiers " + m.asString)
@@ -805,7 +805,7 @@ trait QuantificationTemplates { self: Templates =>
         case Operator(es, _) if (es.flatMap(exprOps.variablesOf).toSet & quantified).nonEmpty =>
           return Some("Unandled implications from operation " + m.asString)
 
-        case _ =>
+        case _ => // OK
       }) (body)
 
       body match {
@@ -933,10 +933,14 @@ trait QuantificationTemplates { self: Templates =>
 
           clauses ++= substClauses
 
-          // this will call `instantiateMatcher` on all matchers in `newTemplate.matchers`
-          clauses ++= newTemplate.contents.instantiate(substMap)
+          val freshQuants = newTemplate.quantifiers.map(p => encodeSymbol(p._1))
+          val freshSubst = (newTemplate.quantifiers.map(_._2) zip freshQuants.map(Left(_))).toMap
+          val fullSubst = substMap ++ freshSubst
 
-          for ((v,q) <- newTemplate.quantifiers) {
+          // this will call `instantiateMatcher` on all matchers in `newTemplate.matchers`
+          clauses ++= newTemplate.contents.instantiate(fullSubst)
+
+          for ((v,q) <- newTemplate.quantifiers.map(_._1) zip freshQuants) {
             clauses ++= registerSymbol(newTemplate.contents.pathVar._2, q, v.tpe)
           }
 

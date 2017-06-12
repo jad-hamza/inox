@@ -39,6 +39,7 @@ trait DSL {
     def >   = GreaterThan(e, _: Expr)
     def >=  = GreaterEquals(e, _: Expr)
     def === = Equals(e, _: Expr)
+    def !== = (e2: Expr) => Not(Equals(e, e2))
 
     // Boolean
     def &&  = And(e, _: Expr)
@@ -71,7 +72,10 @@ trait DSL {
   }
 
   // Literals
-  def E(i: Int): Expr = IntLiteral(i)
+  def E(b: Byte): Expr = Int8Literal(b)
+  def E(s: Short): Expr = Int16Literal(s)
+  def E(i: Int): Expr = Int32Literal(i)
+  def E(l: Long): Expr = Int64Literal(l)
   def E(b: BigInt): Expr = IntegerLiteral(b)
   def E(b: Boolean): Expr = BooleanLiteral(b)
   def E(c: Char): Expr = CharLiteral(c)
@@ -120,7 +124,7 @@ trait DSL {
 
   // Syntax to make ValDefs, e.g. ("i" :: Integer)
   implicit class TypeToValDef(tp: Type) {
-    def :: (nm: String): ValDef = ValDef(FreshIdentifier(nm, true), tp)
+    def :: (nm: String): ValDef = ValDef(FreshIdentifier(nm), tp)
   }
 
   /** Creates a [[Expressions.Let Let]]. A [[Definitions.ValDef ValDef]] and a
@@ -222,6 +226,14 @@ trait DSL {
     )
   }
 
+  /* Patterns */
+  object C {
+    def unapplySeq(expr: Expr): Option[(Identifier, Seq[Expr])] = expr match {
+      case ADT(adt, exprs) => Some((adt.id, exprs))
+      case _ => None
+    }
+  }
+
   /* Definitions */
 
   /** Creates a [[Definitions.FunDef FunDef]] given only an [[Identifier]] for the name;
@@ -237,7 +249,7 @@ trait DSL {
     *                (3) A context which, given the parameters, will return the body of the function.
     * @return A fresh and juicy [[Definitions.FunDef FunDef]]
     */
-  def mkFunDef(id: Identifier)
+  def mkFunDef(id: Identifier, flags: Flag*)
               (tParamNames: String*)
               (builder: Seq[TypeParameter] => (Seq[ValDef], Type, Seq[Variable] => Expr)) = {
     val tParams = tParamNames map TypeParameter.fresh
@@ -245,25 +257,25 @@ trait DSL {
     val (params, retType, bodyBuilder) = builder(tParams)
     val body = bodyBuilder(params map (_.toVariable))
 
-    new FunDef(id, tParamDefs, params, retType, body, Set())
+    new FunDef(id, tParamDefs, params, retType, body, flags.toSet)
   }
 
-  def mkSort(id: Identifier)
+  def mkSort(id: Identifier, flags: Flag*)
             (tParamNames: String*)
             (cons: Seq[Identifier]) = {
     val tParams = tParamNames map TypeParameter.fresh
     val tParamDefs = tParams map (TypeParameterDef(_))
-    new ADTSort(id, tParamDefs, cons, Set())
+    new ADTSort(id, tParamDefs, cons, flags.toSet)
   }
 
-  def mkConstructor(id: Identifier)
+  def mkConstructor(id: Identifier, flags: Flag*)
                    (tParamNames: String*)
                    (sort: Option[Identifier])
                    (fieldBuilder: Seq[TypeParameter] => Seq[ValDef]) = {
     val tParams = tParamNames map TypeParameter.fresh
     val tParamDefs = tParams map (TypeParameterDef(_))
     val fields = fieldBuilder(tParams)
-    new ADTConstructor(id, tParamDefs, sort, fields, Set())
+    new ADTConstructor(id, tParamDefs, sort, fields, flags.toSet)
   }
 
   // TODO: Remove this at some point

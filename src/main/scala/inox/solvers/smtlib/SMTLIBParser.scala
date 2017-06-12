@@ -7,8 +7,8 @@ package smtlib
 import utils._
 
 import _root_.smtlib.lexer.{Tokens => LT, _}
-import _root_.smtlib.parser.Commands.{FunDef => SMTFunDef, _}
-import _root_.smtlib.parser.Terms.{Let => SMTLet, Forall => SMTForall, Identifier => SMTIdentifier, _}
+import _root_.smtlib.trees.Commands.{FunDef => SMTFunDef, _}
+import _root_.smtlib.trees.Terms.{Let => SMTLet, Forall => SMTForall, Identifier => SMTIdentifier, _}
 import _root_.smtlib.theories._
 import _root_.smtlib.theories.experimental._
 import _root_.smtlib.extensions.tip.Terms.{Lambda => SMTLambda, Application => SMTApplication, _}
@@ -16,7 +16,7 @@ import _root_.smtlib.extensions.tip.Commands._
 
 import scala.collection.BitSet
 
-class MissformedSMTException(term: _root_.smtlib.parser.Tree, reason: String)
+class MissformedSMTException(term: _root_.smtlib.trees.Tree, reason: String)
   extends Exception("Missfomed SMT source in " + term + ":\n" + reason)
 
 trait SMTLIBParser {
@@ -71,7 +71,7 @@ trait SMTLIBParser {
       val vds = (sv +: svs).map(fromSMT)
       val bindings = ((sv +: svs) zip vds).map(p => p._1.name -> p._2.toVariable)
       val body = fromSMT(term, BooleanType)(context.withVariables(bindings))
-      Forall(vds, Not(body).setPos(body))
+      Not(Forall(vds, Not(body).setPos(body)))
 
     case Core.ITE(cond, thenn, elze) =>
       IfExpr(fromSMT(cond, BooleanType), fromSMT(thenn, otpe), fromSMT(elze, otpe))
@@ -98,9 +98,8 @@ trait SMTLIBParser {
     case FunctionApplication(QualifiedIdentifier(SimpleIdentifier(SSymbol("distinct")), None), args) =>
       val es = args.map(fromSMT(_))
       val tpEs = (if (es.exists(_.getType == Untyped) && es.exists(_.getType != Untyped)) {
-        val tpe = leastUpperBound(es.map(_.getType).filter(_ != Untyped)).getOrElse {
-          throw new MissformedSMTException(term, "Inconsistent types")
-        }
+        val tpe = leastUpperBound(es.map(_.getType).filter(_ != Untyped))
+        if (tpe == Untyped) throw new MissformedSMTException(term, "Inconsistent types")
         args.map(fromSMT(_, tpe))
       } else {
         es
@@ -199,6 +198,7 @@ trait SMTLIBParser {
     case Sort(SMTIdentifier(SSymbol("bitvector" | "BitVec"), Seq(SNumeral(n))), Seq()) => BVType(n.toInt)
     case Sort(SimpleIdentifier(SSymbol("Bool")), Seq()) => BooleanType
     case Sort(SimpleIdentifier(SSymbol("Int")), Seq()) => IntegerType
+    case Sort(SimpleIdentifier(SSymbol("String")), Seq()) => StringType
     case Sort(SimpleIdentifier(SSymbol("Array")), Seq(from, to)) => MapType(fromSMT(from), fromSMT(to))
     case _ => throw new MissformedSMTException(sort, "unexpected sort: " + sort)
   }

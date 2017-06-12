@@ -3,25 +3,18 @@
 package inox
 package ast
 
+import utils.Position
+
 trait TypeOps {
   protected val trees: Trees
   import trees._
   protected implicit val symbols: Symbols
 
-  object typeOps extends {
-    protected val sourceTrees: trees.type = trees
-    protected val targetTrees: trees.type = trees
-  } with GenTreeOps {
-    type Source = trees.Type
-    type Target = trees.Type
-    lazy val Deconstructor = NAryType
-  }
-
-  class TypeErrorException(msg: String) extends Exception(msg)
+  class TypeErrorException(msg: String, val pos: Position) extends Exception(msg)
 
   object TypeErrorException {
     def apply(obj: Expr, tpes: Seq[Type]): TypeErrorException =
-      new TypeErrorException(s"Type error: $obj, expected ${tpes.mkString(" or ")}, found ${obj.getType}")
+      new TypeErrorException(s"Type error: $obj, expected ${tpes.mkString(" or ")}, found ${obj.getType}", obj.getPos)
     def apply(obj: Expr, tpe: Type): TypeErrorException = apply(obj, Seq(tpe))
   }
 
@@ -31,113 +24,239 @@ trait TypeOps {
       subs.flatMap(typeParamsOf).toSet
   }
 
-  protected def flattenTypeMappings(res: Seq[Option[(Type, Map[TypeParameter, Type])]]): Option[(Seq[Type], Map[TypeParameter, Type])] = {
-    val (tps, subst) = res.map(_.getOrElse(return None)).unzip
-    val flat = subst.flatMap(_.toSeq).groupBy(_._1)
-    Some((tps, flat.mapValues { vs =>
-      vs.map(_._2).distinct match {
-        case Seq(unique) => unique
-        case _ => return None
+  private class Unsolvable extends Exception
+  protected def unsolvable = throw new Unsolvable
+
+  /** Represents a sub-(or super if `!isUpper`)-typing constraint between
+    * type parameter `tp` with bound `bound` */
+  protected sealed abstract class Constraint
+  protected case class Subtyping(tp: TypeParameter, bound: Type, isUpper: Boolean) extends Constraint
+  protected case class Conjunction(constraints: Seq[Constraint]) extends Constraint
+  protected case class Disjunction(constraints: Seq[Constraint]) extends Constraint
+  protected val False = Disjunction(Seq())
+  protected val True = Conjunction(Seq())
+
+  protected def toDNF(c: Constraint): Seq[Seq[Subtyping]] = c match {
+    case Disjunction(cs) =>
+      val recs = cs.map(toDNF)
+      if (recs.exists(_.isEmpty)) Seq(Seq()) else recs.flatten
+    case Conjunction(cs) =>
+      cs.foldLeft(Seq(Seq()) : Seq[Seq[Subtyping]]) { (cnstrs, conj) =>
+        val subs = toDNF(conj)
+        cnstrs.flatMap(conjs => subs.map(conjs2 => conjs ++ conjs2))
       }
-    }))
+    case s: Subtyping => Seq(Seq(s))
   }
 
-  /** Generic type bounds between two types. Serves as a base for a set of subtyping/unification functions.
-    * It will allow subtyping between classes (but type parameters are invariant).
-    * It will also allow a set of free parameters to be unified if needed.
-    *
-    * @param allowSub Allow subtyping for class types
-    * @param freeParams The unifiable type parameters
-    * @param isLub Whether the bound calculated is the LUB
-    * @return An optional pair of (type, map) where type the resulting type bound
-    *         (with type parameters instantiated as needed)
-    *         and map the assignment of type variables.
-    *         Result is empty if types are incompatible.
-    * @see [[leastUpperBound(ts:Seq[TypeOps\.this\.trees\.Type]):Option[TypeOps\.this\.trees\.Type]* leastUpperBound]],
-    *      [[greatestLowerBound(ts:Seq[TypeOps\.this\.trees\.Type]):Option[TypeOps\.this\.trees\.Type]* greatestLowerBound]],
-    *      [[isSubtypeOf]], [[typesCompatible]], [[unify]]
-    */
-  def typeBound(t1: Type, t2: Type, isLub: Boolean, allowSub: Boolean)
-               (implicit freeParams: Seq[TypeParameter]): Option[(Type, Map[TypeParameter, Type])] = {
+  /** Collects the constraints that need to be solved for `instantiation_<:>`.
+    * Note: this is an override point. */
+  protected def instantiationConstraints(toInst: Type, bound: Type, isUpper: Boolean): Constraint = (toInst, bound) match {
+    case (_, Untyped) => False
+    case (Untyped, _) => False
+    case (tp: TypeParameter, _) => Subtyping(tp, bound, isUpper)
+    case (adt: ADTType, _) if adt.lookupADT.isEmpty => False
+    case (_, adt: ADTType) if adt.lookupADT.isEmpty => False
+    case (adt1: ADTType, adt2: ADTType) =>
+      val (d1, d2) = (adt1.getADT.definition, adt2.getADT.definition)
+      val (al, ah) = if (isUpper) (d1, d2) else (d2, d1)
+      if (!((al == ah) || (al.root == ah))) False
+      else {
+        Conjunction(for {
+          (tp, (t1, t2)) <- d1.typeArgs zip (adt1.tps zip adt2.tps)
+          variance <- if (tp.isCovariant) Seq(isUpper) else if (tp.isContravariant) Seq(!isUpper) else Seq(true, false)
+        } yield instantiationConstraints(t1, t2, variance))
+      }
 
-    (t1, t2) match {
-      case (_: TypeParameter, _: TypeParameter) if t1 == t2 =>
-        Some((t1, Map()))
+    case (FunctionType(from1, to1), FunctionType(from2, to2)) if from1.size == from2.size =>
+      val in = (from1 zip from2).map { case (tp1, tp2) =>
+        instantiationConstraints(tp1, tp2, !isUpper) // Contravariant args
+      }
+      val out = instantiationConstraints(to1, to2, isUpper) // Covariant result
+      Conjunction(in :+ out)
 
-      case (t, tp1: TypeParameter) if (freeParams contains tp1) && !(typeParamsOf(t) contains tp1) =>
-        Some((t, Map(tp1 -> t)))
+    case (TupleType(ts1), TupleType(ts2)) if ts1.size == ts2.size =>
+      Conjunction((ts1 zip ts2).map { case (tp1, tp2) =>
+        instantiationConstraints(tp1, tp2, isUpper) // Covariant tuples
+      })
 
-      case (tp1: TypeParameter, t) if (freeParams contains tp1) && !(typeParamsOf(t) contains tp1) =>
-        Some((t, Map(tp1 -> t)))
+    case typeOps.Same(NAryType(ts1, _), NAryType(ts2, _)) if ts1.size == ts2.size =>
+      Conjunction(for {
+        (t1, t2) <- ts1 zip ts2
+        variance <- Seq(true, false)
+      } yield instantiationConstraints(t1, t2, variance))
 
-      case (_: TypeParameter, _) =>
-        None
+    case _ => False
+  }
 
-      case (_, _: TypeParameter) =>
-        None
+  /** Solves the constraints collected by [[instantiationConstraints]].
+    * Note: this is an override point. */
+  protected def instantiationSolution(constraint: Constraint): Map[TypeParameter, Type] = {
+    val disjuncts = toDNF(constraint)
+    disjuncts.view.map { conjuncts =>
+      val flattened = conjuncts.groupBy(_.tp)
+      flattened.foldLeft(Some(Map()): Option[Map[TypeParameter, Type]]) {
+        case (None, _) => None
+        case (Some(map), (tp, cons)) =>
+          val (supers, subs) = cons.partition(_.isUpper)
+          // Lub of the variable will be the glb of its upper bounds
+          val lub = leastUpperBound(subs.map(_.bound))
+          // Glb of the variable will be the lub of its lower bounds
+          val glb = greatestLowerBound(supers.map(_.bound))
 
-      case (adt: ADTType, _) if !adt.lookupADT.isDefined => None
-      case (_, adt: ADTType) if !adt.lookupADT.isDefined => None
+          val image = if (subs.isEmpty) Some(glb) // No lower bounds
+            else if (supers.isEmpty)    Some(lub) // No upper bounds
+            else if (isSubtypeOf(glb, lub)) Some(lub) // Both lower and upper bounds. If they are compatible, both are valid
+            else None                                 // Note: It is enough to use isSubtypeOf because lub and glb contain no type variables (of toInst)
 
-      case (adt1: ADTType, adt2: ADTType) =>
+          image.map(tpe => map + (tp -> tpe))
+      }
+    }.collectFirst { case Some(map) => map }.getOrElse(unsolvable)
+  }
+
+  /** Produces an instantiation for a type so that it respects a type bound (upper or lower). */
+  private def instantiation_<:>(toInst: Type, bound: Type, isUpper: Boolean): Option[Map[TypeParameter, Type]] = {
+    try {
+      Some(instantiationSolution(instantiationConstraints(toInst, bound, isUpper)))
+    } catch {
+      case _: Unsolvable => None
+    }
+  }
+
+  /** Computes the tightest bound (upper or lower) of two types.
+    * Note: this is an override point. */
+  protected def typeBound(tp1: Type, tp2: Type, upper: Boolean): Type = (tp1, tp2) match {
+    case (adt: ADTType, _) if adt.lookupADT.isEmpty => Untyped
+    case (_, adt: ADTType) if adt.lookupADT.isEmpty => Untyped
+    case (adt1: ADTType, adt2: ADTType) =>
+      if (adt1.tps.size != adt2.tps.size) Untyped
+      else {
         val def1 = adt1.getADT.definition
         val def2 = adt2.getADT.definition
-        val bound: Option[ADTDefinition] = if (allowSub) {
-          val an1 = Seq(def1, def1.root)
-          val an2 = Seq(def2, def2.root)
-          if (isLub) {
-            (an1.reverse zip an2.reverse)
-              .takeWhile(((_: ADTDefinition) == (_: ADTDefinition)).tupled)
-              .lastOption.map(_._1)
-          } else {
-            // Lower bound
-            if(an1.contains(def2)) Some(def1)
-            else if (an2.contains(def1)) Some(def2)
-            else None
-          }
+        val an1 = Seq(def1, def1.root)
+        val an2 = Seq(def2, def2.root)
+
+        val tps = (def1.typeArgs zip (adt1.tps zip adt2.tps)).map { case (tp, (t1, t2)) =>
+          if (tp.isCovariant) typeBound(t1, t2, upper)
+          else if (tp.isContravariant) typeBound(t1, t2, !upper)
+          else if (t1 == t2) t1
+          else Untyped
+        }
+
+        val bound = if (upper) {
+          // Upper bound
+          (an1.reverse zip an2.reverse)
+            .takeWhile(((_: ADTDefinition) == (_: ADTDefinition)).tupled)
+            .lastOption.map(_._1)
         } else {
-          (def1 == def2).option(def1)
+          // Lower bound
+          if (an1 contains def2) Some(def1)
+          else if (an2 contains def1) Some(def2)
+          else None
         }
 
-        for {
-          adtDef <- bound
-          (subs, map) <- flattenTypeMappings((adt1.tps zip adt2.tps).map { case (tp1, tp2) =>
-            // Class types are invariant!
-            // XXX @nv: however, we need to allowSub here as long as we don't have variance
-            //          due to encodings of tuples and functions (which have variance) into ADTs
-            typeBound(tp1, tp2, isLub, allowSub)
-          })
-        } yield (adtDef.typed(subs).toType, map)
+        bound.map(_.typed(tps).toType).getOrElse(Untyped).unveilUntyped
+      }
 
-      case (FunctionType(from1, to1), FunctionType(from2, to2)) =>
-        if (from1.size != from2.size) None
-        else {
-          val in = (from1 zip from2).map { case (tp1, tp2) =>
-            typeBound(tp1, tp2, !isLub, allowSub) // Contravariant args
-          }
-          val out = typeBound(to1, to2, isLub, allowSub) // Covariant result
-          flattenTypeMappings(out +: in) map {
-            case (Seq(newTo, newFrom@_*), map) =>
-              (FunctionType(newFrom, newTo), map)
-          }
+    case (FunctionType(from1, to1), FunctionType(from2, to2)) =>
+      if (from1.size != from2.size) Untyped
+      else {
+        val in = (from1 zip from2).map { case (tp1, tp2) =>
+          typeBound(tp1, tp2, !upper) // Contravariant args
         }
+        val out = typeBound(to1, to2, upper) // Covariant result
+        FunctionType(in, out).unveilUntyped
+      }
 
-      case typeOps.Same(t1, t2) =>
-        // Only tuples are covariant
-        def allowVariance = t1 match {
-          case _ : TupleType => true
-          case _ => false
+    case (TupleType(ts1), TupleType(ts2)) =>
+      if (ts1.size != ts2.size) Untyped
+      else {
+        val ts = (ts1 zip ts2).map { case (tp1, tp2) =>
+          typeBound(tp1, tp2, upper) // Covariant tuples
         }
-        val NAryType(ts1, recon) = t1
-        val NAryType(ts2, _) = t2
-        if (ts1.size == ts2.size) {
-          flattenTypeMappings((ts1 zip ts2).map { case (tp1, tp2) =>
-            typeBound(tp1, tp2, isLub, allowSub = allowVariance)
-          }).map { case (subs, map) => (recon(subs), map) }
-        } else None
+        TupleType(ts).unveilUntyped
+      }
 
-      case _ =>
-        None
+    case (t1, t2) =>
+      // Everything else is invariant
+      if (t1 == t2) t1.unveilUntyped else Untyped
+  }
+
+  /** Computes the tightest bound (upper or lower) of a sequence of types */
+  private def typeBound(tps: Seq[Type], upper: Boolean): Type = {
+    if (tps.isEmpty) Untyped
+    else tps.reduceLeft(typeBound(_, _, upper))
+  }
+
+  def leastUpperBound(tp1: Type, tp2: Type): Type =
+    typeBound(tp1, tp2, true)
+
+  def leastUpperBound(tps: Seq[Type]): Type =
+    typeBound(tps, true)
+
+  def greatestLowerBound(tp1: Type, tp2: Type): Type =
+    typeBound(tp1, tp2, false)
+
+  def greatestLowerBound(tps: Seq[Type]): Type =
+    typeBound(tps, false)
+
+  def isSubtypeOf(t1: Type, t2: Type): Boolean = {
+    (!t1.isTyped && !t2.isTyped) || (t1.isTyped && t2.isTyped && leastUpperBound(t1, t2) == t2)
+  }
+
+  def typesCompatible(t1: Type, t2s: Type*) = {
+    leastUpperBound(t1 +: t2s) != Untyped
+  }
+
+  /** Instantiates a type so that it is subtype of another type */
+  def instantiation_<:(subT: Type, superT: Type) =
+    instantiation_<:>(subT, superT, isUpper = true)
+
+  /** Instantiates a type so that it is supertype of another type */
+  def instantiation_>:(superT: Type, subT: Type) =
+    instantiation_<:>(superT, subT, isUpper = false)
+
+  /** Collects the constraints that need to be solved for [[unify]].
+    * Note: this is an override point. */
+  protected def unificationConstraints(t1: Type, t2: Type, free: Seq[TypeParameter]): List[(TypeParameter, Type)] = (t1, t2) match {
+    case _ if t1 == t2 => Nil
+    case (tp: TypeParameter, _) if !(typeParamsOf(t2) contains tp) && (free contains tp) => List(tp -> t2)
+    case (_, tp: TypeParameter) if !(typeParamsOf(t1) contains tp) && (free contains tp) => List(tp -> t1)
+    case (_: TypeParameter, _) => unsolvable
+    case (_, _: TypeParameter) => unsolvable
+    case (adt: ADTType, _) if adt.lookupADT.isEmpty => unsolvable
+    case (_, adt: ADTType) if adt.lookupADT.isEmpty => unsolvable
+    case (adt1: ADTType, adt2: ADTType) if adt1.getADT.definition == adt2.getADT.definition =>
+      (adt1.tps zip adt2.tps).toList flatMap (p => unificationConstraints(p._1, p._2, free))
+    case typeOps.Same(NAryType(ts1, _), NAryType(ts2, _)) if ts1.size == ts2.size =>
+      (ts1 zip ts2).toList flatMap (p => unificationConstraints(p._1, p._2, free))
+    case _ => unsolvable
+  }
+
+  /** Solves the constraints collected by [[unificationConstraints]].
+    * Note: this is an override point. */
+  protected def unificationSolution(const: List[(Type, Type)]): List[(TypeParameter, Type)] = const match {
+    case Nil => Nil
+    case (tp: TypeParameter, t) :: tl =>
+      val replaced = tl map { case (t1, t2) =>
+        (instantiateType(t1, Map(tp -> t)), instantiateType(t2, Map(tp -> t)))
+      }
+      (tp -> t) :: unificationSolution(replaced)
+    case (adt: ADTType, _) :: tl if adt.lookupADT.isEmpty => unsolvable
+    case (_, adt: ADTType) :: tl if adt.lookupADT.isEmpty => unsolvable
+    case (ADTType(id1, tps1), ADTType(id2, tps2)) :: tl if id1 == id2 =>
+      unificationSolution((tps1 zip tps2).toList ++ tl)
+    case typeOps.Same(NAryType(ts1, _), NAryType(ts2, _)) :: tl if ts1.size == ts2.size =>
+      unificationSolution((ts1 zip ts2).toList ++ tl)
+    case _ =>
+      unsolvable
+  }
+
+  /** Unifies two types, under a set of free variables */
+  def unify(t1: Type, t2: Type, free: Seq[TypeParameter]): Option[List[(TypeParameter, Type)]] = {
+    try {
+      Some(unificationSolution(unificationConstraints(t1, t2, free)))
+    } catch {
+      case _: Unsolvable => None
     }
   }
 
@@ -152,67 +271,7 @@ trait TypeOps {
     }
   }
 
-  def unify(tp1: Type, tp2: Type, freeParams: Seq[TypeParameter]) =
-    typeBound(tp1, tp2, isLub = true, allowSub = false)(freeParams).map(_._2)
-
-  /** Will try to instantiate subT and superT so that subT <: superT
-    *
-    * @return Mapping of instantiations
-    */
-  private def subtypingInstantiation(subT: Type, superT: Type, free: Seq[TypeParameter]) =
-    typeBound(subT, superT, isLub = true, allowSub = true)(free) collect {
-      case (tp, map) if instantiateType(superT, map) == tp => map
-    }
-
-  def canBeSubtypeOf(subT: Type, superT: Type) = {
-    subtypingInstantiation(subT, superT, (typeParamsOf(subT) -- typeParamsOf(superT)).toSeq)
-  }
-
-  def canBeSupertypeOf(superT: Type, subT: Type) = {
-    subtypingInstantiation(subT, superT, (typeParamsOf(superT) -- typeParamsOf(subT)).toSeq)
-  }
-
-  def leastUpperBound(tp1: Type, tp2: Type): Option[Type] =
-    typeBound(tp1, tp2, isLub = true, allowSub = true)(Seq()).map(_._1)
-
-  def greatestLowerBound(tp1: Type, tp2: Type): Option[Type] =
-    typeBound(tp1, tp2, isLub = false, allowSub = true)(Seq()).map(_._1)
-
-  def leastUpperBound(ts: Seq[Type]): Option[Type] = {
-    def olub(ot1: Option[Type], t2: Option[Type]): Option[Type] = ot1 match {
-      case Some(t1) => leastUpperBound(t1, t2.get)
-      case None => None
-    }
-
-    if (ts.isEmpty) {
-      None
-    } else {
-      ts.map(Some(_)).reduceLeft(olub)
-    }
-  }
-
-  def greatestLowerBound(ts: Seq[Type]): Option[Type] = {
-    def oglb(ot1: Option[Type], t2: Option[Type]): Option[Type] = ot1 match {
-      case Some(t1) => greatestLowerBound(t1, t2.get)
-      case None => None
-    }
-
-    if (ts.isEmpty) {
-      None
-    } else {
-      ts.map(Some(_)).reduceLeft(oglb)
-    }
-  }
-
-  def isSubtypeOf(t1: Type, t2: Type): Boolean = {
-    leastUpperBound(t1, t2) == Some(t2)
-  }
-
-  def typesCompatible(t1: Type, t2s: Type*) = {
-    leastUpperBound(t1 +: t2s).isDefined
-  }
-
-  def typeCheck(obj: Expr, exps: Type*) {
+  def typeCheck(obj: Expr, exps: Type*) = {
     val res = exps.exists(e => isSubtypeOf(obj.getType, e))
 
     if (!res) {
@@ -249,6 +308,7 @@ trait TypeOps {
       case Untyped => Some(0)
       case BooleanType => Some(2)
       case UnitType => Some(1)
+      // TODO BVType => 2^size
       case TupleType(tps) => cards(tps).map(_.product)
       case SetType(base) => 
         typeCardinality(base).map(b => Math.pow(2, b).toInt)
@@ -298,5 +358,4 @@ trait TypeOps {
     rec(tpe)
     dependencies
   }
-
 }
