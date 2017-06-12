@@ -3,6 +3,8 @@
 package inox
 package ast
 
+import inox.Bench
+
 trait Paths { self: SymbolOps with TypeOps =>
   import trees._
 
@@ -191,9 +193,9 @@ trait Paths { self: SymbolOps with TypeOps =>
       * - implication [[implies]]
       */
     private def distributiveClause(base: Expr, combine: (Expr, Expr) => Expr): Expr = {
-      val (outers, rest) = elements.span(_.isLeft)
-      val inner = fold[Expr](base, let, combine)(rest)
-      fold[Expr](inner, let, (_,_) => scala.sys.error("Should never happen!"))(outers)
+      val (outers, rest) = Bench.time("elements", elements.span(_.isLeft))
+      val inner = Bench.time("folding", fold[Expr](base, let, combine)(rest))
+      Bench.time("expring", fold[Expr](inner, let, (_,_) => scala.sys.error("Should never happen!"))(outers))
     }
 
     /** Folds the path into a conjunct with the expression `base` */
