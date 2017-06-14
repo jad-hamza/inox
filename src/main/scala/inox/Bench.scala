@@ -9,8 +9,10 @@ object Bench {
   var counts: Map[String,Int] = Map()
   
   def time[R](s: String, block: => R): R = {
+//    println("START TIMER: " + s)
     val t0 = System.nanoTime
     val result = block    // call-by-name
+//    println("END TIMER: " + s)
     val t1 = System.nanoTime
     mintimes = mintimes.updated(s,Math.min(mintimes.getOrElse(s,Double.MaxValue),t1 - t0))
     maxtimes = maxtimes.updated(s,Math.max(maxtimes.getOrElse(s,0.0),t1 - t0))

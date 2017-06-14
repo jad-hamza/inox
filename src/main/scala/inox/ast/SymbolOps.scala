@@ -29,31 +29,31 @@ trait SymbolOps { self: TypeOps =>
   /** Replace each node by its constructor
     *
     * Remap the expression by calling the corresponding constructor
-    * for each node of the expression. The constructor will perfom
+    * for each node of the expression. The constructor will perform
     * some local simplifications, resulting in a simplified expression.
     */
-  def simplifyByConstructors(expr: Expr): Expr = {
+  def simplifyByConstructors(expr: Expr): Expr = Bench.time("simplifyByConstructors", {
     def step(e: Expr): Option[Expr] = e match {
-      case Not(t) => Some(not(t))
-      case UMinus(t) => Some(uminus(t))
-      case ADT(tpe, args) => Some(adt(tpe, args))
-      case ADTSelector(e, sel) => Some(adtSelector(e, sel))
-      case AsInstanceOf(e, ct) => Some(asInstOf(e, ct))
-      case IsInstanceOf(e, ct) => Some(isInstOf(e, ct))
-      case Equals(t1, t2) => Some(equality(t1, t2))
-      case Implies(t1, t2) => Some(implies(t1, t2))
-      case Plus(t1, t2) => Some(plus(t1, t2))
-      case Minus(t1, t2) => Some(minus(t1, t2))
-      case Times(t1, t2) => Some(times(t1, t2))
-      case And(args) => Some(andJoin(args))
-      case Or(args) => Some(orJoin(args))
-      case Tuple(args) => Some(tupleWrap(args))
-      case Application(e, es) => Some(application(e, es))
-      case IfExpr(c, t, e) => Some(ifExpr(c, t, e))
+      case Not(t) => inox.Bench.time("tt" + e.getClass, Some(not(t)))
+      case UMinus(t) => inox.Bench.time("tt" + e.getClass, Some(uminus(t)))
+      case ADT(tpe, args) => inox.Bench.time("tt" + e.getClass, Some(adt(tpe, args)))
+      case ADTSelector(e, sel) => inox.Bench.time("tt" + e.getClass, Some(adtSelector(e, sel)))
+      case AsInstanceOf(e, ct) => inox.Bench.time("tt" + e.getClass, Some(asInstOf(e, ct)))
+      case IsInstanceOf(e, ct) => inox.Bench.time("tt" + e.getClass, Some(isInstOf(e, ct)))
+      case Equals(t1, t2) => inox.Bench.time("tt" + e.getClass, Some(equality(t1, t2)))
+      case Implies(t1, t2) => inox.Bench.time("tt" + e.getClass, Some(implies(t1, t2)))
+      case Plus(t1, t2) => inox.Bench.time("tt" + e.getClass, Some(plus(t1, t2)))
+      case Minus(t1, t2) => inox.Bench.time("tt" + e.getClass, Some(minus(t1, t2)))
+      case Times(t1, t2) => inox.Bench.time("tt" + e.getClass, Some(times(t1, t2)))
+      case And(args) => inox.Bench.time("tt" + e.getClass, Some(andJoin(args)))
+      case Or(args) => inox.Bench.time("tt" + e.getClass, Some(orJoin(args)))
+      case Tuple(args) => inox.Bench.time("tt" + e.getClass, Some(tupleWrap(args)))
+      case Application(e, es) => inox.Bench.time("tt" + e.getClass, Some(application(e, es)))
+      case IfExpr(c, t, e) => inox.Bench.time("tt" + e.getClass, Some(ifExpr(c, t, e)))
       case _ => None
     }
     postMap(step)(expr)
-  }
+  })
 
   def simpleSolve(e: Expr, path: Path): Option[Boolean] = {
     val env = simplifier.CNFPath(path)
