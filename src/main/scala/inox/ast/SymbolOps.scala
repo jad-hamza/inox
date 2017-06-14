@@ -105,11 +105,11 @@ trait SymbolOps { self: TypeOps =>
 
   /** Returns 'true' iff the evaluation of expression `expr` cannot lead to a crash under the provided path. */
   def isPureIn(e: Expr, path: Path): Boolean = {
-    val env = simplifier.CNFPath(path)
-    if (env contains BooleanLiteral(false)) {
+    val env = Bench.time("cnf", simplifier.CNFPath(path))
+    if (Bench.time("container", env contains BooleanLiteral(false))) {
       true
     } else {
-      simplifier.isPure(e, env)
+      Bench.time("simplifier is pure", simplifier.isPure(e, env))
     }
   }
 
@@ -1298,7 +1298,7 @@ trait SymbolOps { self: TypeOps =>
     * @see [[SymbolOps.isPure isPure]]
     */
   def let(vd: ValDef, e: Expr, bd: Expr) = {
-    if ((variablesOf(bd) contains vd.toVariable) || !isPure(e)) Let(vd, e, bd).setPos(Position.between(vd.getPos, bd.getPos)) else bd
+    Bench.time("let builder",Let(vd, e, bd).setPos(Position.between(vd.getPos, bd.getPos)))
   }
 
   /** $encodingof simplified `if (c) t else e` (if-expression).

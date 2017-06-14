@@ -220,16 +220,16 @@ trait Paths { self: SymbolOps with TypeOps =>
       * - implication [[implies]]
       */
     private def distributiveClause(base: Expr, combine: (Expr, Expr) => Expr): Expr = {
-      val (outers, rest) = Bench.time("elements", elements.span(_.isLeft))
-      val inner = Bench.time("folding", fold[Expr](base, let, combine)(rest))
-      Bench.time("expring", fold[Expr](inner, let, (_,_) => scala.sys.error("Should never happen!"))(outers))
+      val (outers, rest) = inox.Bench.time("elements", elements.span(_.isLeft))
+      val inner = inox.Bench.time("folding", fold[Expr](base, let, combine)(rest))
+      inox.Bench.time("expring", fold[Expr](inner, let, (_,_) => scala.sys.error("Should never happen!"))(outers))
     }
 
     /** Folds the path into a conjunct with the expression `base` */
-    def and(base: Expr) = distributiveClause(base, trees.and(_, _))
+    def and(base: Expr) = inox.Bench.time("distribute and", distributiveClause(base, trees.and(_, _)))
 
     /** Fold the path into an implication of `base`, namely `path ==> base` */
-    def implies(base: Expr) = distributiveClause(base, trees.implies)
+    def implies(base: Expr) = inox.Bench.time("distributive implies", distributiveClause(base, trees.implies))
 
     /** Folds the path into an expression that shares the path's outer lets
       *
