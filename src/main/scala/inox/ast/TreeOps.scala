@@ -268,7 +268,11 @@ private[ast] trait SymbolTransformerComposition extends SymbolTransformer {
   val s: rhs.s.type = rhs.s
   val t: lhs.t.type = lhs.t
 
-  override def transform(syms: s.Symbols): t.Symbols = lhs.transform(rhs.transform(syms))
+  override def transform(syms: s.Symbols): t.Symbols = {
+    val r = Bench.time("rhs: " + rhs, rhs.transform(syms))
+    val l = Bench.time("lhs: " + lhs, lhs.transform(r))
+    l
+  }
 
   override def equals(that: Any): Boolean = that match {
     case c: SymbolTransformerComposition => rhs == c.rhs && lhs == c.lhs

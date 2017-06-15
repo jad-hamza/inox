@@ -25,9 +25,11 @@ object Bench {
     if (!times.isEmpty) {
       val maxsize = times.map(_._1.size).max
       println("====== REPORT ======")
-      println(times.map { case (s:String,t:Double) => "== %s: %.2fs\t%.2fs\t%.2fs\t%s".
-        format(s.padTo(maxsize,' '),t/1000000000.0,mintimes(s)/1000000000.0,maxtimes(s)/1000000000.0,counts(s))
-      }.toList.sorted.map(s => (1 to s.count(_=='/')).map("  ").mkString + s).mkString("\n"))
+      println(times.toList.sortBy
+        { case (s,t) => t }.map
+        { case (s:String,t:Double) => "== %s: %.2fs\t%.2fs\t%.2fs\t%s".
+          format(s.padTo(maxsize,' '),t/1000000000.0,mintimes(s)/1000000000.0,maxtimes(s)/1000000000.0,counts(s))
+        }.mkString("\n"))
       println("Total time: " + (System.nanoTime - start)/1000000000.0)
       println("====================")
     }
