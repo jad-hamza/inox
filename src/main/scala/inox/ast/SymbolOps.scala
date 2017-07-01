@@ -582,6 +582,8 @@ trait SymbolOps { self: TypeOps =>
   }
 
   def simplifyLets(expr: Expr): Expr = preMap {
+    case Let(v, e, b) if (isPersistent(v.id.name)) => None
+
     case l1 @ Let(v1, Let(v2, e2, b2), b1) => Some(Let(v2, e2, Let(v1, b2, b1).copiedFrom(l1)).copiedFrom(l1))
 
     case Let(v, e, v2) if v.toVariable == v2 => Some(e)

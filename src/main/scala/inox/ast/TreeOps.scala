@@ -270,7 +270,18 @@ private[ast] trait SymbolTransformerComposition extends SymbolTransformer {
 
   override def transform(syms: s.Symbols): t.Symbols = {
     val r = Bench.time("rhs: " + rhs, rhs.transform(syms))
+    // println("BEFORE: " + lhs)
+    // println(r.functions.values.filter(_.id.name == "hint"))
     val l = Bench.time("lhs: " + lhs, lhs.transform(r))
+    // println("AFTER: " + lhs)
+    // println(l.functions.values.filter(_.id.name == "hint"))
+    // println("==========")
+    // println("==========")
+    // println("==========")
+    // println("==========")
+    // println("==========")
+    // println("==========")
+    // println("==========")
     l
   }
 

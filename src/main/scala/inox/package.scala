@@ -35,6 +35,11 @@ package object inox {
   /** @see [[Identifier]] for why this is here */
   val FreshIdentifier = ast.FreshIdentifier
 
+  // variables whose name starts with `persistentVariableName` should never be
+  // simplified by transformations
+  val persistentVariableName = "persistent"
+  def isPersistent(s: String) = s.startsWith(persistentVariableName)
+
   type InoxProgram = Program { val trees: inox.trees.type }
 
   object InoxProgram {
