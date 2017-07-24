@@ -314,9 +314,10 @@ trait SimplifierWithPC extends TransformerWithPC { self =>
       val insts = count { case `v` => 1 case _ => 0 }(rb)
       if (
         (pe && insts <= 1) ||
-        (insts == 1 && CollectorWithPC[Variable](trees)(symbols) {
-          case (`v`, path) if path.isEmpty => v
-        }.collect(rb).nonEmpty)
+        (insts == 1 && !(CollectorWithPC[Boolean](trees)(symbols) {
+          case (l: Lambda, _) if variablesOf(l) contains v => false
+          case (`v`, path) => path.isEmpty
+        }.collect(rb) contains false))
       ) {
         simplify(replaceFromSymbols(Map(vd -> re), rb), path)
       } else {
@@ -342,7 +343,7 @@ trait SimplifierWithPC extends TransformerWithPC { self =>
 
     case FunctionInvocation(id, tps, args) =>
       val (rargs, pargs) = args.map(simplify(_, path)).unzip
-      (FunctionInvocation(id, tps, rargs), pargs.foldLeft(true)(_ && _) && isPureFunction(id))
+      (FunctionInvocation(id, tps, rargs), pargs.foldLeft(isPureFunction(id))(_ && _))
 
     case ADT(tpe, args)      => simplifyAndCons(args, path, adt(tpe, _))
     case Tuple(es)           => simplifyAndCons(es, path, tupleWrap)
@@ -351,8 +352,21 @@ trait SimplifierWithPC extends TransformerWithPC { self =>
     case Plus(l, r)          => simplifyAndCons(Seq(l, r), path, es => plus(es(0), es(1)))
     case Minus(l, r)         => simplifyAndCons(Seq(l, r), path, es => minus(es(0), es(1)))
     case Times(l, r)         => simplifyAndCons(Seq(l, r), path, es => times(es(0), es(1)))
-    case Application(e, es)  => simplifyAndCons(e +: es, path, es => application(es.head, es.tail))
     case Forall(args, body)  => simplifyAndCons(Seq(body), path, es => simpForall(args, es.head))
+
+    case Application(e, es)  => simplify(e, path) match {
+      case (l: Lambda, _) =>
+        val (res, _) = es.map(simplify(_, path)).unzip
+        val re = application(l, res)
+        (re, isPure(re, path))
+
+      case (Assume(pred, l: Lambda), _) =>
+        val (res, _) = es.map(simplify(_, path)).unzip
+        (assume(pred, application(l, res)), false)
+
+      case (re, _) =>
+        (application(re, es.map(simplify(_, path)._1)), false)
+    }
 
     case _ =>
       stack = 0 :: stack
@@ -366,7 +380,9 @@ trait SimplifierWithPC extends TransformerWithPC { self =>
 
   private def simplifyAndCons(es: Seq[Expr], path: CNFPath, cons: Seq[Expr] => Expr): (Expr, Boolean) = {
     val (res, pes) = es.map(simplify(_, path)).unzip
-    (cons(res), pes.foldLeft(true)(_ && _))
+    val re = cons(res)
+    val pe = pes.foldLeft(!isImpureExpr(re))(_ && _)
+    (re, pe)
   }
 
   override protected def rec(e: Expr, path: CNFPath): Expr = {
