@@ -47,7 +47,7 @@ trait TreeOps { self: Trees =>
     }
 
     def traverse(tpe: Type): Unit = {
-      val (tps, flags, _) = deconstructor.deconstruct(tpe)
+      val (id, tps, flags, _) = deconstructor.deconstruct(tpe)
       tps.foreach(traverse)
       flags.foreach(traverse)
     }
@@ -88,7 +88,12 @@ trait TreeTransformer {
     val t: TreeTransformer.this.t.type
   } = s.getDeconstructor(t)
 
-  def transform(id: Identifier, tpe: s.Type): (Identifier, t.Type) = (id, transform(tpe))
+  def transform(id: Identifier): Identifier = {
+    // println("in super transformation: " + id)
+    id
+  }
+
+  def transform(id: Identifier, tpe: s.Type): (Identifier, t.Type) = (transform(id), transform(tpe))
 
   def transform(vd: s.ValDef): t.ValDef = {
     val s.ValDef(id, tpe, flags) = vd
@@ -120,8 +125,11 @@ trait TreeTransformer {
 
   def transform(e: s.Expr): t.Expr = {
     val (vs, es, tps, builder) = deconstructor.deconstruct(e)
+    // println("\n\n\ntransforming")
+    // println(e)
 
     var changed = false
+
     val newVs = for (v <- vs) yield {
       val vd = v.toVal
       val newVd = transform(vd)
@@ -129,17 +137,35 @@ trait TreeTransformer {
       newVd.toVariable
     }
 
+    // println("==== VSv")
+    // println(e)
+    // println(vs)
+    // println(newVs)
+    // println("==== VS^\n\n")
+
     val newEs = for (e <- es) yield {
       val newE = transform(e)
       if (e ne newE) changed = true
       newE
     }
 
+    // println("==== ESv")
+    // println(e)
+    // println(es)
+    // println(newEs)
+    // println("==== ES^\n\n")
+
     val newTps = for (tp <- tps) yield {
       val newTp = transform(tp)
       if (tp ne newTp) changed = true
       newTp
     }
+
+    // println("==== TPSv")
+    // println(e)
+    // println(tps)
+    // println(newTps)
+    // println("==== TPS^\n\n")
 
     if (changed || (s ne t)) {
       builder(newVs, newEs, newTps).copiedFrom(e)
@@ -149,9 +175,18 @@ trait TreeTransformer {
   }
 
   def transform(tpe: s.Type): t.Type = {
-    val (tps, flags, builder) = deconstructor.deconstruct(tpe)
+    val (ids, tps, flags, builder) = deconstructor.deconstruct(tpe)
 
     var changed = false
+
+    val newIds = for (id <- ids) yield {
+      // println("ENTERING ID TRANSFORMATION " + (id, id.getClass))
+      val newId = transform(id)
+      // println("EXITING ID TRANSFORMATION " + (id, newId))
+      if (id ne newId) changed = true
+      newId
+    }
+
     val newTps = for (tp <- tps) yield {
       val newTp = transform(tp)
       if (tp ne newTp) changed = true
@@ -164,11 +199,17 @@ trait TreeTransformer {
       newFlag
     }
 
+    val res =
     if (changed || (s ne t)) {
-      builder(newTps, newFlags).copiedFrom(tpe)
+      builder(newIds, newTps, newFlags).copiedFrom(tpe)
     } else {
       tpe.asInstanceOf[t.Type]
     }
+    // println("TRANSFORMING TYPE: " + tpe + ", " + tpe.getClass)
+    // println(newIds)
+    // println(changed)
+    // println("TRANSFORMED INTO: " + res)
+    res
   }
 
   def transform(flag: s.Flag): t.Flag = {

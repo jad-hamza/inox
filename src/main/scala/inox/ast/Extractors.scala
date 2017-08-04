@@ -341,24 +341,24 @@ trait TreeDeconstructor {
 
   def deconstruct(expr: s.Expr): DeconstructedExpr = exprTable(expr.getClass)(expr)
 
-  def deconstruct(tp: s.Type): (Seq[s.Type], Seq[s.Flag], (Seq[t.Type], Seq[t.Flag]) => t.Type) = tp match {
-    case s.ADTType(d, ts) => (ts, Seq(), (ts, _) => t.ADTType(d, ts))
-    case s.TupleType(ts) => (ts, Seq(), (ts, _) => t.TupleType(ts))
-    case s.SetType(tp) => (Seq(tp), Seq(), (ts, _) => t.SetType(ts.head))
-    case s.BagType(tp) => (Seq(tp), Seq(), (ts, _) => t.BagType(ts.head))
-    case s.MapType(from,to) => (Seq(from, to), Seq(), (ts, _) => t.MapType(ts(0), ts(1)))
-    case s.FunctionType(fts, tt) => (tt +: fts, Seq(),  (ts, _) => t.FunctionType(ts.tail.toList, ts.head))
+  def deconstruct(tp: s.Type): (Option[Identifier], Seq[s.Type], Seq[s.Flag], (Option[Identifier], Seq[t.Type], Seq[t.Flag]) => t.Type) = tp match {
+    case s.ADTType(d, ts) => (Some(d), ts, Seq(), (newId, ts, _) => t.ADTType(newId.get, ts))
+    case s.TupleType(ts) => (None, ts, Seq(), (_, ts, _) => t.TupleType(ts))
+    case s.SetType(tp) => (None, Seq(tp), Seq(), (_, ts, _) => t.SetType(ts.head))
+    case s.BagType(tp) => (None, Seq(tp), Seq(), (_, ts, _) => t.BagType(ts.head))
+    case s.MapType(from,to) => (None, Seq(from, to), Seq(), (_, ts, _) => t.MapType(ts(0), ts(1)))
+    case s.FunctionType(fts, tt) => (None, tt +: fts, Seq(),  (_, ts, _) => t.FunctionType(ts.tail.toList, ts.head))
 
-    case s.TypeParameter(id, flags) => (Seq(), flags.toSeq, (_, flags) => t.TypeParameter(id, flags.toSet))
-    case s.BVType(size) => (Seq(), Seq(), (_, _) => t.BVType(size))
+    case s.TypeParameter(id, flags) => (Some(id), Seq(), flags.toSeq, (newId, _, flags) => t.TypeParameter(newId.get, flags.toSet))
+    case s.BVType(size) => (None, Seq(), Seq(), ((_, _, _) => t.BVType(size)))
 
-    case s.Untyped     => (Seq(), Seq(), (_, _) => t.Untyped)
-    case s.BooleanType => (Seq(), Seq(), (_, _) => t.BooleanType)
-    case s.UnitType    => (Seq(), Seq(), (_, _) => t.UnitType)
-    case s.CharType    => (Seq(), Seq(), (_, _) => t.CharType)
-    case s.IntegerType => (Seq(), Seq(), (_, _) => t.IntegerType)
-    case s.RealType    => (Seq(), Seq(), (_, _) => t.RealType)
-    case s.StringType  => (Seq(), Seq(), (_, _) => t.StringType)
+    case s.Untyped     => (None, Seq(), Seq(), (_, _, _) => t.Untyped)
+    case s.BooleanType => (None, Seq(), Seq(), (_, _, _) => t.BooleanType)
+    case s.UnitType    => (None, Seq(), Seq(), (_, _, _) => t.UnitType)
+    case s.CharType    => (None, Seq(), Seq(), (_, _, _) => t.CharType)
+    case s.IntegerType => (None, Seq(), Seq(), (_, _, _) => t.IntegerType)
+    case s.RealType    => (None, Seq(), Seq(), (_, _, _) => t.RealType)
+    case s.StringType  => (None, Seq(), Seq(), (_, _, _) => t.StringType)
   }
 
   def deconstruct(f: s.Flag): (Seq[s.Expr], Seq[s.Type], (Seq[t.Expr], Seq[t.Type]) => t.Flag) = f match {
