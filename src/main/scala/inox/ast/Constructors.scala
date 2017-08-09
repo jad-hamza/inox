@@ -109,14 +109,14 @@ trait Constructors { self: Trees =>
   /** $encodingof simplified `... ==> ...` (implication)
     * @see [[Expressions.Implies Implies]]
     */
-  def implies(lhs: Expr, rhs: Expr): Expr = Bench.time("imply builder", (lhs, rhs) match {
+  def implies(lhs: Expr, rhs: Expr): Expr = (lhs, rhs) match {
     case (BooleanLiteral(false), _) => BooleanLiteral(true)
     case (_, BooleanLiteral(true))  => BooleanLiteral(true)
     case (BooleanLiteral(true), r)  => r
     case (l, BooleanLiteral(false)) => Not(l)
     case (l1, Implies(l2, r2))      => implies(and(l1, l2), r2)
     case _                          => Implies(lhs, rhs)
-  })
+  }
 
   /** $encodingof simplified `... == ...` (equality).
     * @see [[Expressions.Equals Equals]]
