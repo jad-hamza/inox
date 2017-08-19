@@ -53,8 +53,13 @@ trait TreeOps { self: Trees =>
     }
 
     def traverse(tpe: Type): Unit = {
+<<<<<<< HEAD
       val (id, tps, flags, _) = deconstructor.deconstruct(tpe)
       id.foreach(traverse)
+=======
+      val (ids, tps, flags, _) = deconstructor.deconstruct(tpe)
+      ids.foreach(traverse)
+>>>>>>> 082081b77e80a0e95696c8649bdfb3d7f25a9d1d
       tps.foreach(traverse)
       flags.foreach(traverse)
     }
@@ -99,10 +104,14 @@ trait TreeTransformer {
     val t: TreeTransformer.this.t.type
   } = s.getDeconstructor(t)
 
+<<<<<<< HEAD
   def transform(id: Identifier): Identifier = {
     // println("in super transformation: " + id)
     id
   }
+=======
+  def transform(id: Identifier): Identifier = id
+>>>>>>> 082081b77e80a0e95696c8649bdfb3d7f25a9d1d
 
   def transform(id: Identifier, tpe: s.Type): (Identifier, t.Type) = (transform(id), transform(tpe))
 
@@ -136,8 +145,11 @@ trait TreeTransformer {
 
   def transform(e: s.Expr): t.Expr = {
     val (ids, vs, es, tps, builder) = deconstructor.deconstruct(e)
+<<<<<<< HEAD
     // println("\n\n\ntransforming")
     // println(e)
+=======
+>>>>>>> 082081b77e80a0e95696c8649bdfb3d7f25a9d1d
 
     var changed = false
 
@@ -197,9 +209,13 @@ trait TreeTransformer {
     var changed = false
 
     val newIds = for (id <- ids) yield {
+<<<<<<< HEAD
       // println("ENTERING ID TRANSFORMATION " + (id, id.getClass))
       val newId = transform(id)
       // println("EXITING ID TRANSFORMATION " + (id, newId))
+=======
+      val newId = transform(id)
+>>>>>>> 082081b77e80a0e95696c8649bdfb3d7f25a9d1d
       if (id ne newId) changed = true
       newId
     }
@@ -222,10 +238,14 @@ trait TreeTransformer {
     } else {
       tpe.asInstanceOf[t.Type]
     }
+<<<<<<< HEAD
     // println("TRANSFORMING TYPE: " + tpe + ", " + tpe.getClass)
     // println(newIds)
     // println(changed)
     // println("TRANSFORMED INTO: " + res)
+=======
+
+>>>>>>> 082081b77e80a0e95696c8649bdfb3d7f25a9d1d
     res
   }
 
