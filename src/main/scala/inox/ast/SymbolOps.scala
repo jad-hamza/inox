@@ -1331,9 +1331,7 @@ trait SymbolOps { self: TypeOps =>
     * @see [[SymbolOps.isPure isPure]]
     */
   def let(vd: ValDef, e: Expr, bd: Expr) = {
-    if ((variablesOf(bd) contains vd.toVariable) || !isPure(e)(PurityOptions.Unchecked))
-      Let(vd, e, bd).setPos(Position.between(vd.getPos, bd.getPos))
-    else bd
+    Let(vd, e, bd).setPos(Position.between(vd.getPos, bd.getPos))
   }
 
   /** $encodingof simplified `if (c) t else e` (if-expression).
