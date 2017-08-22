@@ -14,7 +14,6 @@ import scala.collection.mutable.{Set => MutableSet, Map => MutableMap}
   * @see [[ast.Definitions.ADTDefinition.equality]] for such a case of equality
   */
 trait EqualityTemplates { self: Templates =>
-  import context._
   import program._
   import program.trees._
   import program.symbols._
@@ -216,9 +215,9 @@ trait EqualityTemplates { self: Templates =>
         newClauses ++= instantiateEquality(blocker, e)
       }
 
-      reporter.debug("Unrolling equalities (" + newClauses.size + ")")
+      ctx.reporter.debug("Unrolling equalities (" + newClauses.size + ")")
       for (cl <- newClauses) {
-        reporter.debug("  . " + cl)
+        ctx.reporter.debug("  . " + cl)
       }
 
       newClauses.toSeq

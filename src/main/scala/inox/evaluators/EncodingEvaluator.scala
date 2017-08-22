@@ -12,7 +12,7 @@ trait EncodingEvaluator extends DeterministicEvaluator { self =>
     val program: encoder.targetProgram.type
   }
 
-  lazy val context = underlying.context
+  lazy val options = underlying.options
 
   def eval(expr: Expr, model: program.Model): EvaluationResult = {
     val res = underlying.eval(encoder.encode(expr), model.encode(encoder))

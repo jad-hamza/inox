@@ -29,7 +29,6 @@ trait AbstractPrincessSolver extends AbstractSolver with ADTManagers {
   case class PrincessSolverException(msg: String)
       extends Exception("handle PrincessSolver: " + msg)
 
-  import context._
   import program._
   import program.trees._
   import program.symbols._
@@ -38,18 +37,18 @@ trait AbstractPrincessSolver extends AbstractSolver with ADTManagers {
 
   val name = "Princess"
 
-  interruptManager.registerForInterrupts(this)
+  ctx.interruptManager.registerForInterrupts(this)
 
   type Trees = IExpression
   type Model = SimpleAPI.PartialModel
 
-  private val enableAssertions = reporter.isDebugEnabled
+  private val enableAssertions = ctx.reporter.isDebugEnabled
 
   ap.util.Debug enableAllAssertions enableAssertions
   protected[princess] val p = SimpleAPI(
     enableAssert = enableAssertions,
     dumpScala = enableAssertions,
-    scalaDumpBasename = options.findOptionOrDefault(Main.optFiles).headOption.map(_.getName).getOrElse("NA") + "-",
+    scalaDumpBasename = ctx.options.findOptionOrDefault(Main.optFiles).headOption.map(_.getName).getOrElse("NA") + "-",
     dumpDirectory = if (enableAssertions) {
       val dir = new java.io.File("pri-sessions")
       dir.mkdirs()

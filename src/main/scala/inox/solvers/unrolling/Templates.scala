@@ -18,9 +18,6 @@ trait Templates
      with IncrementalStateWrapper {
 
   val program: Program
-  val context: Context
-
-  import context._
   import program._
   import program.trees._
   import program.symbols._
@@ -47,7 +44,7 @@ trait Templates
   private[unrolling] lazy val trueT = mkEncoder(Map.empty)(BooleanLiteral(true))
   private[unrolling] lazy val falseT = mkEncoder(Map.empty)(BooleanLiteral(false))
 
-  protected lazy val deferFactor =  3 * options.findOptionOrDefault(optModelFinding)
+  protected lazy val deferFactor =  3 * ctx.options.findOptionOrDefault(optModelFinding)
 
   private var currentGen: Int = 0
   protected def currentGeneration: Int = currentGen
@@ -74,7 +71,7 @@ trait Templates
   def unroll: Clauses = {
     assert(canUnroll, "Impossible to unroll further")
     currentGen = managers.flatMap(_.unrollGeneration).min + 1
-    reporter.debug("Unrolling generation [" + currentGen + "]")
+    ctx.reporter.debug("Unrolling generation [" + currentGen + "]")
     managers.flatMap(_.unroll)
   }
 
@@ -822,7 +819,7 @@ trait Templates
 
     val tpeClauses = bindings.flatMap { case (v, s) => registerSymbol(encodedStart, s, v.getType) }.toSeq
 
-    val timer = timers.solvers.simplify.start()
+    val timer = ctx.timers.solvers.simplify.start()
     val instExpr = simplifyFormula(expr)
     timer.stop()
 
@@ -839,7 +836,7 @@ trait Templates
     val allClauses = encodedStart +: (tpeClauses ++ substClauses ++ templateClauses)
 
     for (cl <- allClauses) {
-      reporter.debug("  . " + cl)
+      ctx.reporter.debug("  . " + cl)
     }
 
     allClauses

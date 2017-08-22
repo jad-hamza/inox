@@ -7,32 +7,43 @@ trait Semantics { self =>
   val symbols: trees.Symbols
   val program: Program { val trees: self.trees.type; val symbols: self.symbols.type }
 
-  private[this] val solverCache = new utils.LruCache[Context, solvers.SolverFactory {
+  private[this] val solverCache = new utils.LruCache[Options, solvers.SolverFactory {
     val program: self.program.type
     type S <: solvers.combinators.TimeoutSolver { val program: self.program.type }
   }](5)
 
-  private[this] val evaluatorCache = new utils.LruCache[Context, evaluators.DeterministicEvaluator {
+  private[this] val evaluatorCache = new utils.LruCache[Options, evaluators.DeterministicEvaluator {
     val program: self.program.type
   }](5)
 
-  protected def createSolver(ctx: Context): solvers.SolverFactory {
+  protected def createSolver(opts: Options): solvers.SolverFactory {
     val program: self.program.type
     type S <: solvers.combinators.TimeoutSolver { val program: self.program.type }
   }
 
-  protected def createEvaluator(ctx: Context): evaluators.DeterministicEvaluator {
+  protected def createEvaluator(opts: Options): evaluators.DeterministicEvaluator {
     val program: self.program.type
   }
 
-  def getSolver(implicit ctx: Context): solvers.SolverFactory {
+  @inline
+  def getSolver: solvers.SolverFactory {
     val program: self.program.type
     type S <: solvers.combinators.TimeoutSolver { val program: self.program.type }
-  } = solverCache.cached(ctx, createSolver(ctx))
+  } = getSolver(program.ctx.options)
 
-  def getEvaluator(implicit ctx: Context): evaluators.DeterministicEvaluator {
+  def getSolver(opts: Options): solvers.SolverFactory {
     val program: self.program.type
-  } = evaluatorCache.cached(ctx, createEvaluator(ctx))
+    type S <: solvers.combinators.TimeoutSolver { val program: self.program.type }
+  } = solverCache.cached(opts, createSolver(opts))
+
+  @inline
+  def getEvaluator: evaluators.DeterministicEvaluator {
+    val program: self.program.type
+  } = getEvaluator(program.ctx.options)
+
+  def getEvaluator(opts: Options): evaluators.DeterministicEvaluator {
+    val program: self.program.type
+  } = evaluatorCache.cached(opts, createEvaluator(opts))
 }
 
 trait SemanticsProvider { self =>

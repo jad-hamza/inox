@@ -11,16 +11,15 @@ import _root_.smtlib.theories._
 import _root_.smtlib.theories.experimental._
 
 trait CVC4Target extends SMTLIBTarget with SMTLIBDebugger {
-  import context._
   import program._
-  import program.trees._
-  import program.symbols._
+  import trees._
+  import symbols._
 
   def targetName = "cvc4"
 
   protected lazy val interpreter = {
     val opts = interpreterOpts
-    reporter.debug("Invoking solver with "+opts.mkString(" "))
+    ctx.reporter.debug("Invoking solver with "+opts.mkString(" "))
     new CVC4Interpreter("cvc4", opts.toArray)
   }
 

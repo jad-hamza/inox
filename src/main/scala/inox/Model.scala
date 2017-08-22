@@ -5,29 +5,24 @@ package inox
 object optPrintChooses extends FlagOptionDef("printchooses", false)
 
 object Model {
-  def empty(p: Program, ctx: Context): p.Model = new Model {
+  def empty(p: Program): p.Model = new Model {
     val program: p.type = p
-    val context = ctx
     val vars: Map[p.trees.ValDef, p.trees.Expr] = Map.empty
     val chooses: Map[(Identifier, Seq[p.trees.Type]), p.trees.Expr] = Map.empty
   }
 
-  def apply(p: Program, ctx: Context)(
+  def apply(p: Program)(
     vs: Map[p.trees.ValDef, p.trees.Expr],
     cs: Map[(Identifier, Seq[p.trees.Type]), p.trees.Expr]
   ): p.Model = new Model {
     val program: p.type = p
-    val context = ctx
     val vars = vs
     val chooses = cs
   }
 }
 
 trait Model { self =>
-  protected val program: Program
-  protected val context: Context
-
-  import context._
+  val program: Program
   import program._
   import program.trees._
 
@@ -40,7 +35,6 @@ trait Model { self =>
     val sourceProgram: program.type
   }): t.targetProgram.Model = new inox.Model {
     val program: t.targetProgram.type = t.targetProgram
-    val context = self.context
     val vars = self.vars.map { case (vd, e) => t.encode(vd) -> t.encode(e) }
     val chooses = self.chooses.map { case ((id, tps), e) => (id, tps.map(t.encode(_))) -> t.encode(e) }
   }
@@ -70,7 +64,7 @@ trait Model { self =>
       " -> " + e.asString
     }).mkString("\n")
 
-    val printChooses = options.findOptionOrDefault(optPrintChooses)
+    val printChooses = ctx.options.findOptionOrDefault(optPrintChooses)
     lazy val chooseString = if (!printChooses) "" else {
       val fdChooses = symbols.functions.values.flatMap(fd => fd.fullBody match {
         case Choose(res, _) => Some(res.id)

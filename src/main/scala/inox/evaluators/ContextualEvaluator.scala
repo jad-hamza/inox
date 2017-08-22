@@ -6,7 +6,6 @@ package evaluators
 object optMaxCalls extends IntOptionDef("maxcalls", 50000, "<PosInt> | -1 (unbounded)")
 
 trait ContextualEvaluator extends Evaluator {
-  import context._
   import program._
   import program.trees._
 
@@ -56,7 +55,7 @@ trait ContextualEvaluator extends Evaluator {
 
   def eval(ex: Expr, model: program.Model) = {
     try {
-      timers.evaluators.recursive.runtime.start()
+      ctx.timers.evaluators.recursive.runtime.start()
       EvaluationResults.Successful(e(ex)(initRC(model), initGC))
     } catch {
       case EvalError(msg) =>
@@ -68,7 +67,7 @@ trait ContextualEvaluator extends Evaluator {
       case jre: java.lang.RuntimeException =>
         EvaluationResults.RuntimeError(jre.getMessage)
     } finally {
-      timers.evaluators.recursive.runtime.stop()
+      ctx.timers.evaluators.recursive.runtime.stop()
     }
   }
 

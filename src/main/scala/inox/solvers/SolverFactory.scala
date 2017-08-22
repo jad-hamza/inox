@@ -85,7 +85,7 @@ object SolverFactory {
   private var reported: Boolean = false
 
   def getFromName(name: String, force: Boolean = false)
-                 (p: Program, ctx: Context)
+                 (p: Program, opts: Options)
                  (enc: ast.ProgramTransformer {
                     val sourceProgram: p.type
                     val targetProgram: Program { val trees: inox.trees.type }
@@ -98,10 +98,10 @@ object SolverFactory {
         case Some((guard, names, requirement)) if !guard() =>
           val replacement = names.collectFirst {
             case name if fallbacks(name)._1() => name
-          }.getOrElse(ctx.reporter.fatalError(s"No fallback available for solver $name"))
+          }.getOrElse(p.ctx.reporter.fatalError(s"No fallback available for solver $name"))
 
           if (!reported) {
-            ctx.reporter.warning(s"The $requirement is not available. Falling back onto $replacement.")
+            p.ctx.reporter.warning(s"The $requirement is not available. Falling back onto $replacement.")
             reported = true
           }
           replacement
@@ -121,7 +121,7 @@ object SolverFactory {
 
         () => new {
           val program: p.type = p
-          val context = ctx
+          val options = opts
           val encoder: enc.type = enc
         } with z3.NativeZ3Solver with TimeoutSolver with tip.TipDebugger {
           val semantics = sem
@@ -141,7 +141,7 @@ object SolverFactory {
 
         () => new {
           val program: p.type = p
-          val context = ctx
+          val options = opts
           val encoder: enc.type = enc
         } with z3.NativeZ3Optimizer with TimeoutSolver {
           val semantics = sem
@@ -162,7 +162,7 @@ object SolverFactory {
 
         () => new {
           val program: p.type = p
-          val context = ctx
+          val options = opts
           val encoder: enc.type = enc
         } with UnrollingSolver with TimeoutSolver with tip.TipDebugger {
           val semantics = sem
@@ -174,7 +174,7 @@ object SolverFactory {
 
           protected object underlying extends {
             val program: progEnc.targetProgram.type = progEnc.targetProgram
-            val context = ctx
+            val options = opts
           } with z3.UninterpretedZ3Solver {
             val semantics: program.Semantics = targetSem
           }
@@ -190,7 +190,7 @@ object SolverFactory {
 
         () => new {
           val program: p.type = p
-          val context = ctx
+          val options = opts
           val encoder: enc.type = enc
         } with UnrollingSolver with TimeoutSolver with tip.TipDebugger {
           val semantics = sem
@@ -202,7 +202,7 @@ object SolverFactory {
 
           protected object underlying extends {
             val program: progEnc.targetProgram.type = progEnc.targetProgram
-            val context = ctx
+            val options = opts
           } with smtlib.Z3Solver {
             val semantics: program.Semantics = targetSem
           }
@@ -218,7 +218,7 @@ object SolverFactory {
 
         () => new {
           val program: p.type = p
-          val context = ctx
+          val options = opts
           val encoder: enc.type = enc
         } with UnrollingOptimizer with TimeoutSolver {
           val semantics = sem
@@ -230,7 +230,7 @@ object SolverFactory {
 
           protected object underlying extends {
             val program: progEnc.targetProgram.type = progEnc.targetProgram
-            val context = ctx
+            val options = opts
           } with smtlib.optimization.Z3Optimizer {
             val semantics: program.Semantics = targetSem
           }
@@ -238,7 +238,7 @@ object SolverFactory {
       })
 
       case "smt-cvc4" => create(p)(finalName, {
-        val ev = sem.getEvaluator(ctx)
+        val ev = sem.getEvaluator
         val chooseEnc = ChooseEncoder(p)(enc)
         val fullEnc = enc andThen chooseEnc
         val theoryEnc = theories.CVC4(fullEnc)(ev)
@@ -247,7 +247,7 @@ object SolverFactory {
 
         () => new {
           val program: p.type = p
-          val context = ctx
+          val options = opts
           val encoder: enc.type = enc
         } with UnrollingSolver with TimeoutSolver with tip.TipDebugger {
           val semantics = sem
@@ -260,7 +260,7 @@ object SolverFactory {
 
           protected object underlying extends {
             val program: progEnc.targetProgram.type = progEnc.targetProgram
-            val context = ctx
+            val options = opts
           } with smtlib.CVC4Solver {
             val semantics: program.Semantics = targetSem
           }
@@ -268,7 +268,7 @@ object SolverFactory {
       })
 
       case "princess" => create(p)(finalName, {
-        val ev = sem.getEvaluator(ctx)
+        val ev = sem.getEvaluator
         val chooseEnc = ChooseEncoder(p)(enc)
         val fullEnc = enc andThen chooseEnc
         val theoryEnc = theories.Princess(fullEnc)(ev)
@@ -276,7 +276,7 @@ object SolverFactory {
 
         () => new {
           val program: p.type = p
-          val context = ctx
+          val options = opts
           val encoder: enc.type = enc
         } with princess.PrincessSolver with TimeoutSolver {
           val semantics = sem
@@ -295,40 +295,40 @@ object SolverFactory {
 
   val solvers: Set[String] = solverNames.map(_._1).toSet
 
-  def getFromSettings(p: Program, ctx: Context)
+  def getFromSettings(p: Program, opts: Options)
                      (enc: ast.ProgramTransformer {
                         val sourceProgram: p.type
                         val targetProgram: Program { val trees: inox.trees.type }
                       })(implicit sem: p.Semantics): SolverFactory { val program: p.type; type S <: TimeoutSolver { val program: p.type } } = {
-    ctx.options.findOption(optSelectedSolvers) match {
+    opts.findOption(optSelectedSolvers) match {
       case None => optSelectedSolvers.default.toSeq match {
         case Seq() => throw FatalError("No selected solver")
-        case Seq(single) => getFromName(single, force = false)(p, ctx)(enc)
+        case Seq(single) => getFromName(single, force = false)(p, opts)(enc)
         case multiple => PortfolioSolverFactory(p) {
-          multiple.map(name => getFromName(name, force = false)(p, ctx)(enc))
+          multiple.map(name => getFromName(name, force = false)(p, opts)(enc))
         }
       }
 
       case Some(set) => set.toSeq match {
         case Seq() => throw FatalError("No selected solver")
-        case Seq(single) => getFromName(single, force = true)(p, ctx)(enc)
+        case Seq(single) => getFromName(single, force = true)(p, opts)(enc)
         case multiple => PortfolioSolverFactory(p) {
-          multiple.map(name => getFromName(name, force = true)(p, ctx)(enc))
+          multiple.map(name => getFromName(name, force = true)(p, opts)(enc))
         }
       }
     }
   }
 
-  def optimizer(p: InoxProgram, ctx: Context): SolverFactory {
+  def optimizer(p: InoxProgram, opts: Options): SolverFactory {
     val program: p.type
     type S <: Optimizer with TimeoutSolver { val program: p.type }
   } = {
-    val solversOpt = ctx.options.findOption(optSelectedSolvers)
+    val solversOpt = opts.findOption(optSelectedSolvers)
     (solversOpt getOrElse optSelectedSolvers.default).toSeq match {
       case Seq() => throw FatalError("No selected solver")
       case Seq(single) =>
         val name = if (single.endsWith("-opt")) single else single + "-opt"
-        getFromName(name, force = solversOpt.isDefined)(p, ctx)(ast.ProgramEncoder.empty(p))(p.getSemantics).asInstanceOf[SolverFactory {
+        getFromName(name, force = solversOpt.isDefined)(p, opts)(ast.ProgramEncoder.empty(p))(p.getSemantics).asInstanceOf[SolverFactory {
           val program: p.type
           type S <: Optimizer with TimeoutSolver { val program: p.type }
         }]
@@ -336,29 +336,34 @@ object SolverFactory {
     }
   }
 
-  def apply(name: String, p: InoxProgram, ctx: Context, force: Boolean = false): SolverFactory {
+  def apply(name: String, p: InoxProgram, opts: Options, force: Boolean = false): SolverFactory {
     val program: p.type
     type S <: TimeoutSolver { val program: p.type }
-  } = getFromName(name, force = force)(p, ctx)(ast.ProgramEncoder.empty(p))(p.getSemantics)
+  } = getFromName(name, force = force)(p, opts)(ast.ProgramEncoder.empty(p))(p.getSemantics)
 
-  def apply(p: InoxProgram, ctx: Context): SolverFactory {
+  def apply(p: InoxProgram, opts: Options): SolverFactory {
     val program: p.type
     type S <: TimeoutSolver { val program: p.type }
-  } = ctx.options.findOption(optSelectedSolvers) match {
+  } = opts.findOption(optSelectedSolvers) match {
     case None => optSelectedSolvers.default.toSeq match {
       case Seq() => throw FatalError("No selected solver")
-      case Seq(single) => apply(single, p, ctx, force = false)
+      case Seq(single) => apply(single, p, opts, force = false)
       case multiple => PortfolioSolverFactory(p) {
-        multiple.map(name => apply(name, p, ctx, force = false))
+        multiple.map(name => apply(name, p, opts, force = false))
       }
     }
 
     case Some(set) => set.toSeq match {
       case Seq() => throw FatalError("No selected solver")
-      case Seq(single) => apply(single, p, ctx, force = true)
+      case Seq(single) => apply(single, p, opts, force = true)
       case multiple => PortfolioSolverFactory(p) {
-        multiple.map(name => apply(name, p, ctx, force = true))
+        multiple.map(name => apply(name, p, opts, force = true))
       }
     }
   }
+
+  def default(p: InoxProgram): SolverFactory {
+    val program: p.type
+    type S <: TimeoutSolver { val program: p.type }
+  } = apply(p, p.ctx.options)
 }

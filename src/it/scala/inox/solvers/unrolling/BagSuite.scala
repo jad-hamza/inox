@@ -78,9 +78,10 @@ class BagSuite extends SolvingTestSuite with DatastructureUtils {
   }
 
   val symbols = baseSymbols.withFunctions(Seq(bag, split, split2))
-  val program = InoxProgram(symbols)
 
-  test("Finite model finding 1") { implicit ctx =>
+  test("Finite model finding 1") { ctx =>
+    val program = InoxProgram(ctx, symbols)
+
     val aT = TypeParameter.fresh("A")
     val b = ("bag" :: BagType(aT)).toVariable
     val clause = Not(Equals(b, FiniteBag(Seq.empty, aT)))
@@ -88,7 +89,9 @@ class BagSuite extends SolvingTestSuite with DatastructureUtils {
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isSAT)
   }
 
-  test("Finite model finding 2") { implicit ctx =>
+  test("Finite model finding 2") { ctx =>
+    val program = InoxProgram(ctx, symbols)
+
     val aT = TypeParameter.fresh("A")
     val b = ("bag" :: BagType(aT)).toVariable
     val elem = ("elem" :: aT).toVariable
@@ -97,7 +100,9 @@ class BagSuite extends SolvingTestSuite with DatastructureUtils {
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isSAT)
   }
 
-  test("Finite model finding 3") { implicit ctx =>
+  test("Finite model finding 3") { ctx =>
+    val program = InoxProgram(ctx, symbols)
+
     val aT = TypeParameter.fresh("A")
     val b = ("bag" :: BagType(aT)).toVariable
     val Seq(e1, v1, e2, v2) = Seq("e1" :: aT, "v1" :: IntegerType, "e2" :: aT, "v2" :: IntegerType).map(_.toVariable)
@@ -110,7 +115,8 @@ class BagSuite extends SolvingTestSuite with DatastructureUtils {
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isSAT)
   }
 
-  test("split preserves content") { implicit ctx =>
+  test("split preserves content") { ctx =>
+    val program = InoxProgram(ctx, symbols)
     val Let(vd, body, Assume(pred, _)) = split.fullBody
     val clause = Let(vd, body, pred)
 
@@ -124,7 +130,8 @@ class BagSuite extends SolvingTestSuite with DatastructureUtils {
     else Test
   }
 
-  test("split2 doesn't preserve content", filter(_)) { implicit ctx =>
+  test("split2 doesn't preserve content", filter(_)) { ctx =>
+    val program = InoxProgram(ctx, symbols)
     val Let(vd, body, Assume(pred, _)) = split2.fullBody
     val clause = Let(vd, body, pred)
 

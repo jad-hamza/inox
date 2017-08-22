@@ -19,7 +19,7 @@ trait NativeZ3Optimizer extends AbstractUnrollingOptimizer with Z3Unrolling { se
 
   protected object underlying extends {
     val program: targetProgram.type = targetProgram
-    val context = self.context
+    val options = self.options
   } with AbstractOptimizer with Z3Native {
     import program._
     import program.trees._

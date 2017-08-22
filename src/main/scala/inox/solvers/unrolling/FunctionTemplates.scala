@@ -9,7 +9,6 @@ import utils._
 import scala.collection.mutable.{Set => MutableSet, Map => MutableMap}
 
 trait FunctionTemplates { self: Templates =>
-  import context._
   import program._
   import program.trees._
   import program.symbols._
@@ -20,7 +19,7 @@ trait FunctionTemplates { self: Templates =>
     private val cache: MutableMap[TypedFunDef, FunctionTemplate] = MutableMap.empty
 
     def apply(tfd: TypedFunDef): FunctionTemplate = cache.getOrElseUpdate(tfd, {
-      val timer = timers.solvers.simplify.start()
+      val timer = ctx.timers.solvers.simplify.start()
       val lambdaBody: Expr = simplifyFormula(tfd.fullBody)
       timer.stop()
 
@@ -217,9 +216,9 @@ trait FunctionTemplates { self: Templates =>
           newCls += mkImplies(blocker, defBlocker)
         }
 
-        reporter.debug("Unrolling behind "+call+" ("+newCls.size+")")
+        ctx.reporter.debug("Unrolling behind "+call+" ("+newCls.size+")")
         for (cl <- newCls) {
-          reporter.debug("  . "+cl)
+          ctx.reporter.debug("  . "+cl)
         }
 
         newClauses ++= newCls
@@ -230,7 +229,7 @@ trait FunctionTemplates { self: Templates =>
         case None => callInfos += b -> (gen, origGen, notB, calls)
       }
 
-      reporter.debug(s"   - ${newClauses.size} new clauses")
+      ctx.reporter.debug(s"   - ${newClauses.size} new clauses")
 
       newClauses.toSeq
     }

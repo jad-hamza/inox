@@ -9,7 +9,7 @@ import unrolling._
 import z3.scala._
 
 trait Z3Unrolling extends AbstractUnrollingSolver { self =>
-  import context._
+
   import program._
   import program.trees._
   import program.symbols._
@@ -27,7 +27,6 @@ trait Z3Unrolling extends AbstractUnrollingSolver { self =>
 
   object templates extends {
     val program: targetProgram.type = targetProgram
-    val context = self.context
   } with Templates {
     import program.trees._
 
@@ -95,7 +94,7 @@ trait Z3Unrolling extends AbstractUnrollingSolver { self =>
 
     /** WARNING this code is very similar to Z3Native.extractModel!!! */
     def modelEval(elem: Z3AST, tpe: t.Type): Option[t.Expr] = {
-      val timer = timers.solvers.z3.eval.start()
+      val timer = ctx.timers.solvers.z3.eval.start()
       val res = tpe match {
         case t.BooleanType => model.evalAs[Boolean](elem).map(t.BooleanLiteral)
 

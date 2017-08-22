@@ -16,7 +16,7 @@ trait EncodingSolver extends Solver {
   }
 
   lazy val name = "E:" + underlying.name
-  lazy val context = underlying.context
+  lazy val options = underlying.options
 
   def assertCnstr(expr: Expr) = underlying.assertCnstr(encoder.encode(expr))
 

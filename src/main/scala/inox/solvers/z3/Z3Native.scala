@@ -16,17 +16,18 @@ case class UnsoundExtractionException(ast: Z3AST, msg: String)
 // This is just to factor out the things that are common in "classes that deal
 // with a Z3 instance"
 trait Z3Native extends ADTManagers with Interruptible { self: AbstractSolver =>
-  import context._
+
   import program._
   import program.trees._
   import program.symbols._
+  import program.symbols.bestRealType
 
   type Trees = Z3AST
   type Model = Z3Model
 
   protected implicit val semantics: program.Semantics
 
-  interruptManager.registerForInterrupts(this)
+  ctx.interruptManager.registerForInterrupts(this)
 
   private[this] var freed = false
   private[this] val traceE = new Exception()
@@ -58,7 +59,7 @@ trait Z3Native extends ADTManagers with Interruptible { self: AbstractSolver =>
       z3.delete()
       z3 = null
     }
-    interruptManager.unregisterForInterrupts(this)
+    ctx.interruptManager.unregisterForInterrupts(this)
   }
 
   def interrupt(): Unit = {
@@ -776,7 +777,7 @@ trait Z3Native extends ADTManagers with Interruptible { self: AbstractSolver =>
       })
     }.toMap
 
-    inox.Model(program, context)(vars, chooses.toMap)
+    inox.Model(program)(vars, chooses.toMap)
   }
 
   def extractUnsatAssumptions(cores: Set[Z3AST]): Set[Expr] = {

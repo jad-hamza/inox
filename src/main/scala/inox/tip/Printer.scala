@@ -19,8 +19,7 @@ import scala.collection.mutable.{Map => MutableMap}
 
 import utils._
 
-class Printer(val program: InoxProgram, val context: Context, writer: Writer) extends solvers.smtlib.SMTLIBTarget {
-  import context._
+class Printer(val program: InoxProgram, writer: Writer) extends solvers.smtlib.SMTLIBTarget {
   import program._
   import program.trees._
   import program.symbols._

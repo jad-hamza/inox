@@ -21,43 +21,48 @@ class StringSuite extends SolvingTestSuite {
     "solvr=" + options.findOptionOrDefault(optSelectedSolvers).head
   }
 
-  val program = InoxProgram(NoSymbols)
-
-  test("Empty string model") { implicit ctx =>
+  test("Empty string model") { ctx =>
+    val program = InoxProgram(ctx, NoSymbols)
     val v = Variable.fresh("v", StringType)
     val clause = Equals(v, StringLiteral(""))
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isSAT)
   }
 
-  test("Non-empty string model") { implicit ctx =>
+  test("Non-empty string model") { ctx =>
+    val program = InoxProgram(ctx, NoSymbols)
     val v = Variable.fresh("v", StringType)
     val clause = Not(Equals(v, StringLiteral("")))
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isSAT)
   }
 
-  test("Ground equality") { implicit ctx =>
+  test("Ground equality") { ctx =>
+    val program = InoxProgram(ctx, NoSymbols)
     val clause = Equals(StringLiteral(""), StringLiteral(""))
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isSAT)
   }
 
-  test("Ground dis-equality") { implicit ctx =>
+  test("Ground dis-equality") { ctx =>
+    val program = InoxProgram(ctx, NoSymbols)
     val clause = Not(Equals(StringLiteral(""), StringLiteral("")))
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isUNSAT)
   }
 
-  test("Positive length") { implicit ctx =>
+  test("Positive length") { ctx =>
+    val program = InoxProgram(ctx, NoSymbols)
     val v = Variable.fresh("v", StringType)
     val clause = GreaterThan(StringLength(v), IntegerLiteral(BigInt(0)))
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isSAT)
   }
 
-  test("Non-ASCII string encoding") { implicit ctx =>
+  test("Non-ASCII string encoding") { ctx =>
+    val program = InoxProgram(ctx, NoSymbols)
     val v = Variable.fresh("v", StringType)
     val clause = Equals(v, StringLiteral("abéà"))
     assert(SimpleSolverAPI(program.getSolver).solveSAT(clause).isSAT)
   }
 
-  test("Non-ASCII string length") { implicit ctx =>
+  test("Non-ASCII string length") { ctx =>
+    val program = InoxProgram(ctx, NoSymbols)
     val v = Variable.fresh("v", IntegerType)
     val clause = Equals(v, StringLength(StringLiteral("abéà")))
     SimpleSolverAPI(program.getSolver).solveSAT(clause) match {
@@ -68,7 +73,8 @@ class StringSuite extends SolvingTestSuite {
     }
   }
 
-  test("String with newline") { implicit ctx =>
+  test("String with newline") { ctx =>
+    val program = InoxProgram(ctx, NoSymbols)
     val v = Variable.fresh("r", StringType)
     val clause = Equals(v, StringLiteral("\n"))
     SimpleSolverAPI(program.getSolver).solveSAT(clause) match {

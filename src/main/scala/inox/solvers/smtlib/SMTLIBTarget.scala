@@ -28,13 +28,12 @@ import scala.collection.BitSet
 import scala.collection.mutable.{Map => MutableMap}
 
 trait SMTLIBTarget extends SMTLIBParser with Interruptible with ADTManagers {
+  val program: Program
   lazy val trees: program.trees.type = program.trees
   lazy val symbols: program.symbols.type = program.symbols
-
-  import context._
   import program._
-  import program.trees._
-  import program.symbols._
+  import trees._
+  import symbols._
 
   def targetName: String
 
@@ -47,7 +46,7 @@ trait SMTLIBTarget extends SMTLIBParser with Interruptible with ADTManagers {
   /* Interruptible interface */
   private var aborted = false
 
-  interruptManager.registerForInterrupts(this)
+  ctx.interruptManager.registerForInterrupts(this)
 
   def interrupt(): Unit = {
     aborted = true
@@ -55,7 +54,7 @@ trait SMTLIBTarget extends SMTLIBParser with Interruptible with ADTManagers {
   }
 
   def free(): Unit = {
-    interruptManager.unregisterForInterrupts(this)
+    ctx.interruptManager.unregisterForInterrupts(this)
     interpreter.free()
   }
 
@@ -63,7 +62,7 @@ trait SMTLIBTarget extends SMTLIBParser with Interruptible with ADTManagers {
   def emit(cmd: SExpr, rawOut: Boolean = false): SExpr = {
     interpreter.eval(cmd) match {
       case err @ Error(msg) if !aborted && !rawOut =>
-        reporter.fatalError(s"Unexpected error from $targetName solver: $msg")
+        ctx.reporter.fatalError(s"Unexpected error from $targetName solver: $msg")
       case res =>
         res
     }
@@ -72,7 +71,7 @@ trait SMTLIBTarget extends SMTLIBParser with Interruptible with ADTManagers {
   def parseSuccess() = {
     val res = interpreter.parser.parseGenResponse
     if (res != Success) {
-      reporter.warning("Unnexpected result from " + targetName + ": " + res + " expected success")
+      ctx.reporter.warning("Unnexpected result from " + targetName + ": " + res + " expected success")
     }
   }
 
