@@ -245,7 +245,7 @@ trait TreeTransformer {
     case sort: s.ADTSort => new t.ADTSort(
       transform(sort.id),
       sort.tparams map transform,
-      sort.cons.sortBy(_.name) map transform,
+      sort.cons map transform,
       sort.flags map transform
     )
 
