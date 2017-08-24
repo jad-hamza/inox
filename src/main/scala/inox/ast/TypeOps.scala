@@ -14,7 +14,11 @@ trait TypeOps {
 
   object TypeErrorException {
     def apply(obj: Expr, tpes: Seq[Type]): TypeErrorException =
-      new TypeErrorException(s"Type error: $obj, expected ${tpes.mkString(" or ")}, found ${obj.getType}", obj.getPos)
+      new TypeErrorException(
+        s"Type error: $obj, expected ${tpes.mkString(" or ")}, found ${obj.getType}.\n" + 
+        symbols.explainTyping(obj)(new PrinterOptions()), 
+        obj.getPos
+      )
     def apply(obj: Expr, tpe: Type): TypeErrorException = apply(obj, Seq(tpe))
   }
 
