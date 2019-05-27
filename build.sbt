@@ -101,13 +101,8 @@ sourceGenerators in Compile += Def.task {
   Seq(file)
 }.taskValue
 
-lazy val genDoc = taskKey[Unit]("Typecheck and interpret the documentation")
-
 tutSourceDirectory := sourceDirectory.value / "main" / "doc"
 tutTargetDirectory := baseDirectory.value / "doc"
-
-genDoc := { tutQuick.value; () }
-genDoc := (genDoc dependsOn (compile in Compile)).value
 
 Keys.fork in run := true
 
@@ -125,7 +120,7 @@ lazy val root = (project in file("."))
     logBuffered := false,
     parallelExecution := false
   )) : _*)
-  .settings(compile := ((compile in Compile) dependsOn script dependsOn genDoc).value)
+  .settings(compile := ((compile in Compile) dependsOn script).value)
 
 publishMavenStyle := true
 
