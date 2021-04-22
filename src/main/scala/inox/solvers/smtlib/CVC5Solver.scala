@@ -6,14 +6,14 @@ package smtlib
 
 import inox.OptionParsers._
 
-object optCVC4Options extends SetOptionDef[String] {
-  val name = "solver:cvc4"
+object optCVC5Options extends SetOptionDef[String] {
+  val name = "solver:cvc5"
   val default = Set[String]()
   val elementParser = stringParser
-  val usageRhs = "<cvc4-opt>"
+  val usageRhs = "<cvc5-opt>"
 }
 
-trait CVC4Solver extends SMTLIBSolver with CVC4Target {
+trait CVC5Solver extends SMTLIBSolver with CVC5Target {
   import context._
   import program.trees._
   import SolverResponses._
@@ -23,9 +23,8 @@ trait CVC4Solver extends SMTLIBSolver with CVC4Target {
       "-q",
       "--produce-models",
       "--incremental",
-      // "--dt-rewrite-error-sel", // Removing since it causes CVC4 to segfault on some inputs
       "--print-success",
-      "--lang", "smt2.5"
+      "--lang", "smt2.6"
     ) ++ options.findOptionOrDefault(optCVC4Options)
   }
 

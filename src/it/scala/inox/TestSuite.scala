@@ -52,7 +52,8 @@ trait TestSuite extends AnyFunSuite with Matchers with TimeLimits {
           if (status == Ignore || newCtx.options.findOptionOrDefault(optSelectedSolvers).exists { sname =>
             (sname == "nativez3" || sname == "unrollz3" || sname == "nativez3-opt") && !solvers.SolverFactory.hasNativeZ3 ||
             (sname == "smt-z3" || sname == "smt-z3-opt") && !solvers.SolverFactory.hasZ3 ||
-            sname == "smt-cvc4" && !solvers.SolverFactory.hasCVC4
+            sname == "smt-cvc4" && !solvers.SolverFactory.hasCVC4 ||
+            sname == "smt-cvc5" && !solvers.SolverFactory.hasCVC5
           }) {
             super.ignore(f"$index%3d: $name ${optionsString(newCtx.options)}")(())
           } else {

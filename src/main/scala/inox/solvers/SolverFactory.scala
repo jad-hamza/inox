@@ -49,6 +49,13 @@ object SolverFactory {
     case _: java.io.IOException => false
   }
 
+  lazy val hasCVC5 = try {
+    new CVC4Interpreter("cvc5", Array("-q", "--lang", "smt2.6"))
+    true
+  } catch {
+    case _: java.io.IOException => false
+  }
+
   def create[S1 <: Solver](p: Program)(nme: String, builder: () => S1 { val program: p.type }):
            SolverFactory { val program: p.type; type S = S1 { val program: p.type } } = {
     new SolverFactory {
@@ -69,6 +76,7 @@ object SolverFactory {
     "nativez3-opt"  -> "Native Z3 optimizer with z3-templates for unrolling",
     "unrollz3"      -> "Native Z3 with inox-templates for unrolling",
     "smt-cvc4"      -> "CVC4 through SMT-LIB",
+    "smt-cvc5"      -> "CVC5 through SMT-LIB",
     "smt-z3"        -> "Z3 through SMT-LIB",
     "smt-z3-opt"    -> "Z3 optimizer through SMT-LIB",
     "smt-z3:<exec>" -> "Z3 through SMT-LIB with custom executable name",
@@ -80,6 +88,7 @@ object SolverFactory {
     "nativez3-opt" -> (() => hasNativeZ3, Seq("smt-z3-opt"),                       "Z3 native interface"),
     "unrollz3"     -> (() => hasNativeZ3, Seq("smt-z3", "smt-cvc4",   "princess"), "Z3 native interface"),
     "smt-cvc4"     -> (() => hasCVC4,     Seq("nativez3", "smt-z3",   "princess"), "'cvc4' binary"),
+    "smt-cvc5"     -> (() => hasCVC4,     Seq("smt-cvc4", "nativez3", "smt-z3",   "princess"), "'cvc5' binary"),
     "smt-z3"       -> (() => hasZ3,       Seq("nativez3", "smt-cvc4", "princess"), "'z3' binary"),
     "smt-z3-opt"   -> (() => hasZ3,       Seq("nativez3-opt"),                     "'z3' binary"),
     "princess"     -> (() => true,        Seq(),                                   "Princess solver")
@@ -292,6 +301,37 @@ object SolverFactory {
             val program: progEnc.targetProgram.type = progEnc.targetProgram
             val context = ctx
           } with smtlib.CVC4Solver {
+            val semantics: program.Semantics = targetSem
+          }
+        }
+      })
+
+      case "smt-cvc5" => create(p)(finalName, {
+        val ev = sem.getEvaluator(ctx)
+        val chooseEnc = ChooseEncoder(p)(enc)
+        val fullEnc = enc andThen chooseEnc
+        val theoryEnc = theories.CVC4(fullEnc)(ev)
+        val progEnc = fullEnc andThen theoryEnc
+        val targetProg = progEnc.targetProgram
+        val targetSem = targetProg.getSemantics
+
+        () => new {
+          val program: p.type = p
+          val context = ctx
+          val encoder: enc.type = enc
+        } with UnrollingSolver with TimeoutSolver with tip.TipDebugger {
+          override protected val semantics = sem
+          override protected val chooses: chooseEnc.type = chooseEnc
+          override protected val theories: theoryEnc.type = theoryEnc
+          override protected lazy val fullEncoder = fullEnc
+          override protected lazy val programEncoder = progEnc
+          override protected lazy val targetProgram: targetProg.type = targetProg
+          override protected val targetSemantics = targetSem
+
+          protected val underlying = new {
+            val program: progEnc.targetProgram.type = progEnc.targetProgram
+            val context = ctx
+          } with smtlib.CVC5Solver {
             val semantics: program.Semantics = targetSem
           }
         }
