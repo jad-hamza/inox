@@ -297,6 +297,13 @@ trait SymbolOps { self: TypeOps =>
     inFunction: Boolean
   )(implicit opts: PurityOptions): (Seq[ValDef], Expr, Seq[(Variable, Expr, Seq[Expr])]) = {
 
+    implicit val printerOps = new PrinterOptions(printUniqueIds = true)
+    println("=" *  100)
+    println("Beginning of normalizeStructure:")
+    println("args", args.map(_.asString))
+    println("expr", expr.asString)
+    println("preserveApps, onlySimple, inFunction:", preserveApps, onlySimple, inFunction)
+
     val subst: MutableMap[Variable, (Expr, Seq[Expr])] = MutableMap.empty
     val varSubst: MutableMap[Variable, Variable] = MutableMap.empty
     val locals: MutableSet[Variable] = MutableSet.empty
@@ -406,10 +413,22 @@ trait SymbolOps { self: TypeOps =>
           // Whether the expression is guaranteed to be called, typically in foralls
           val isCalled = !inFunction && args.forall(vd => hasInstance(vd.tpe) contains true)
 
-          if (!minimal) None
-          else if (isLocal(e, path, true) && isAlwaysPure(e)) Some(Seq())
-          else if (isLocal(e, path, false) && (isPureIn(e, path) || isCalled)) Some(path.conditions)
-          else None
+          println("\n\n")
+          println("unapply: " + e.asString)
+
+          if (!minimal) { println("!minimal\n\n"); None }
+          else if (isLocal(e, path, true) && isAlwaysPure(e)) {
+            println("isLocal(e, path, true) && isAlwaysPure(e)\n\n")
+            Some(Seq())
+          }
+          else if (isLocal(e, path, false) && (isPureIn(e, path) || isCalled)) {
+            println("isLocal(e, path, false) && (isPureIn(e, path) || isCalled)\n\n")
+            Some(path.conditions)
+          }
+          else {
+            println("final else branch\n\n")
+            None
+          }
         }
       }
 
@@ -534,6 +553,15 @@ trait SymbolOps { self: TypeOps =>
         (v, expr, conds)
       }
     }
+
+    println("\n")
+    println("End of normalizeStructure:")
+    println("bindings", bindings.map(_.asString))
+    println("newExpr", newExpr.asString)
+    println("-" * 10)
+    println("deps:")
+    println(deps.map(p => p._1.asString + " -> " + p._2.asString).mkString("\n"))
+    println("=" *  100)
 
     (bindings, newExpr, deps)
   }

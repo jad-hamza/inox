@@ -224,14 +224,6 @@ trait LambdaTemplates { self: Templates =>
       clauses += mkImplies(b, mkEquals(r, mkAnd(blockedResults.toSeq :+ nextB : _*)))
     }
 
-    if (ft.from.isEmpty) clauses ++= (for {
-      template <- byType(ft).values.toList
-      if canBeEqual(template.ids._2, f) && isPureTemplate(template)
-    } yield {
-      val (tmplApp, fApp) = (mkApp(template.ids._2, ft, Seq.empty), mkApp(f, ft, Seq.empty))
-      mkImplies(mkAnd(b, template.start, mkEquals(tmplApp, fApp)), mkEquals(template.ids._2, f))
-    })
-
     lazy val gen = nextGeneration(currentGeneration)
     for (app @ (_, App(caller, _, args, _)) <- applications(ft)) {
       if (f == caller) {
@@ -306,16 +298,6 @@ trait LambdaTemplates { self: Templates =>
         case (v, dep) => registerClosure(newTemplate.start, idT -> newTemplate.tpe, dep -> v.getType)
       }
 
-      // make sure we introduce sound equality constraints between closures that take no arguments
-      val arglessEqClauses: Clauses = if (newTemplate.tpe.from.nonEmpty || !isPureTemplate(newTemplate)) {
-        Seq.empty
-      } else {
-        for ((b,f) <- freeFunctions(newTemplate.tpe).toSeq if canBeEqual(idT, f)) yield {
-          val (tmplApp, fApp) = (mkApp(idT, newTemplate.tpe, Seq.empty), mkApp(f, newTemplate.tpe, Seq.empty))
-          mkImplies(mkAnd(b, newTemplate.start, mkEquals(tmplApp, fApp)), mkEquals(idT, f))
-        }
-      }
-
       val nonFreeClauses = for ((b,f) <- freeFunctions(newTemplate.tpe).toSeq if canBeEqual(idT, f)) yield {
         val (blocker, lastB) = nonFreeBlockers(f)
         val nextB = encodeSymbol(Variable.fresh("b_next", BooleanType(), true))
@@ -328,7 +310,6 @@ trait LambdaTemplates { self: Templates =>
       val clauses = newTemplate.structure.instantiation ++
         equalityClauses(newTemplate) ++
         orderingClauses ++
-        arglessEqClauses ++
         nonFreeClauses
 
       byID += idT -> newTemplate
